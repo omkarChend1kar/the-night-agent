@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+
+# Environment variables
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Logs
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+*.log
+
+# Databases (SQLite)
+*.db
+*.sqlite
+*.sqlite-journal
+
+# Build output
+dist/
+build/
+.next/
+out/
+
+# System Files
+.DS_Store
+Thumbs.db
+
+# IDEs
+.vscode/
+.idea/
+
+# Kestra
+kestra.jar
+
+# Project Specific
+host_keys/
+backend/host_keys/
+sidecar/sidecar
+scripts/simulate-e2e.js
+coverage/
+
+# Temporary
+tmp/
+temp/

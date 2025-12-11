@@ -1,0 +1,33 @@
+UI/UX Design Philosophy: "Engineered Clarity"
+The design philosophy is built directly on the "Clean Code" principles mentioned in the architecture. Just as the backend components have a "Single Responsibility," every UI element must have a single, clear purpose.
+
+The UI is not a "dashboard" meant to impress executives; it is a precision instrument for engineers to quickly validate autonomous actions.
+
+Core Pillars of "Engineered Clarity"
+A. The Principle of Least Noise (Minimalism)
+The architecture stresses "minimal, focused contracts" between modules. The UI must do the same.
+
+Philosophy: If data doesn't aid the decision to approve or reject a fix, remove it. The UI should feel empty rather than cluttered.
+
+Application: The "Fix Viewer" should prioritize the code diff above all else. Metadata like timestamps or agent IDs should be secondary or hidden beneath tooltips.
+
+B. Trust Through Transparency (Human-in-the-Loop Focus)
+The entire architecture hinges on Agent 3 waiting for "human approval" before merging. The UI is the critical bridge between autonomous proposal and human action.
+
+Philosophy: The UI must prove the agent's work. It never asks the user to blindly trust it.
+
+Application: The "confidence score" should be prominent, but clearly backed by data (e.g., "Confidence: 91% - based on stack trace match and 3 previous similar fixes"). The "Approve Merge" action must be explicit, perhaps requiring MFA confirmation as noted in the API specs, reinforcing security.
+
+C. Dark Mode Native (The "Night" Aesthetic)
+The tool is "The Night Agent" that "silently monitors". The aesthetic should reflect a tool running in the background, non-intrusively.
+
+Philosophy: A "lights-out" interface designed for prolonged exposure in low-light engineering environments. It should feel stealthy and efficient.
+
+Application: Deep charcoal backgrounds (not pure black) with low-contrast text for general reading. Use vibrant color only for actionable signals: Red for active anomalies, Green for proposed additions in a diff.
+
+D. Function Over Form (SOLID UI)
+Aligned with Uncle Bob's style and the "principle of least astonishment".
+
+Philosophy: Standard engineering patterns prevail over trendy design. A Git diff should look like a Git diff. A terminal log should look like a terminal log.
+
+Application: Use monospaced fonts for code and logs. Ensure navigation is predictable (e.g., a left-hand rail for Services/Anomalies, main content area for Fix Review).

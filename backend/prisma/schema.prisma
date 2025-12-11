@@ -1,0 +1,46 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id           String   @id @default(uuid())
+  email        String   @unique
+  name         String?
+  password     String
+  mfaSecret    String?
+  isMfaEnabled Boolean  @default(false)
+  repos        Repository[]
+  tempSshKey   String?  // Temporary storage for SSH private key during onboarding
+  createdAt    DateTime @default(now())
+}
+
+model Repository {
+  id              String    @id @default(uuid())
+  url             String
+  protocol        String    // "https" | "ssh"
+  encryptedCreds  String?   // PAT (Nullable if public or waiting)
+  sshKeyPath      String?   // [NEW] Local path to private key
+  sshConfigAlias  String?   // [NEW] Host alias in ~/.ssh/config (e.g. repo-uuid-git)
+  publicKey       String?   // For SSH
+  userId          String
+  user            User      @relation(fields: [userId], references: [id])
+  anomalies       Anomaly[]
+  createdAt       DateTime @default(now())
+}
+
+model Anomaly {
+  id        String   @id @default(uuid())
+  context   String   // JSON blob of error details
+  status    String   // "PENDING", "ANALYZING", "FIX_PROPOSED", "RESOLVED"
+  repoId    String
+  repo      Repository @relation(fields: [repoId], references: [id])
+  createdAt DateTime @default(now())
+}

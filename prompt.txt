@@ -1,0 +1,90 @@
+ Design a provider-agnostic Git-access subsystem for a multi-tenant automation agent (“Night Agent”) that runs as a single backend instance and manages code for many different client repositories across different Git providers (GitHub, GitLab, Bitbucket, Azure DevOps, AWS CodeCommit, Gitea, Gerrit, etc.).
+
+The design MUST follow these strict requirements:
+
+1. **Provider-Agnostic Access**
+   - No GitHub/GitLab/Bitbucket API assumptions.
+   - All access MUST be via pure SSH (not HTTPS, not OAuth).
+   - System must work with ANY Git server that supports SSH.
+
+2. **Per-Client SSH Keys (Never shared)**
+   - Automatically generate a unique SSH keypair for each client during onboarding.
+   - Store private keys securely (Vault/KMS/Encrypted Storage).
+   - Output a public key for the client to add as a deploy key with read/write permissions.
+
+3. **Automatic Hostname Detection**
+   - Client provides a repository SSH URL (e.g., git@github.com:org/repo.git).
+   - System extracts the hostname, org, and repo path automatically.
+   - Do NOT require provider-specific logic.
+
+4. **Dynamic SSH Config Generation**
+   - For each client, create a unique SSH config entry like:
+       Host clientA-git
+           HostName <extracted hostname>
+           User git
+           IdentityFile /secure/path/clientA_key
+   - Night Agent must clone using the rewritten URL:
+       git@clientA-git:org/repo.git
+
+5. **Access Verification (CRITICAL REQUIREMENT)**
+   After the client adds the public key, the backend system MUST automatically verify access by performing:
+   - An SSH handshake test (`ssh -T clientA-git`)
+   - A read test: `git ls-remote` (should succeed)
+   - A write test:
+       - Create a throwaway branch (e.g., `night-agent-access-check`)
+       - Push it to the client repo
+       - Delete it afterwards
+   The system must confirm:
+   - SSH key is recognized
+   - Read access is working
+   - Write access is working
+   Provide a full flow for this verification protocol.
+
+6. **Security Requirements**
+   - Private keys never leave the server.
+   - Private keys must be stored encrypted.
+   - No plaintext tokens or passwords ever used.
+   - Zero-trust assumptions: each client isolated by key.
+   - Include recommendations for key rotation.
+   - Prevent key leakage across tenants.
+   - Only “minimum required permissions” recommended for deploy keys.
+
+7. **Scalability Requirements**
+   - One backend instance managing hundreds/thousands of client repos.
+   - Efficient SSH config generation and reloading.
+   - Cache cloning credentials per client.
+   - Architecture must avoid reloading SSH agent for every operation.
+   - Safe concurrency across independent clients.
+
+8. **Operational Requirements**
+   - Onboarding API endpoint: accepts repo SSH URL and returns public key.
+   - Verification status endpoint: reports if read/write access is confirmed.
+   - Error-handling for invalid URLs, invalid hostnames, missing keys, revoked keys.
+   - Audit log for access-check operations.
+   - Automatic recovery if client accidentally revokes access.
+
+9. **Deliverables Needed in the Answer**
+   - A complete architecture overview.
+   - Sequence diagrams for:
+       * Onboarding & key generation
+       * Hostname extraction flow
+       * SSH config generation
+       * Access verification (read/write)
+       * Normal operation: agent pulling/pushing code
+   - Component-level design for:
+       * Key management subsystem
+       * Git operation executor
+       * SSH config manager
+       * Repository registry
+       * Verification engine
+       * Secure storage layer
+   - Example folder structure for the server.
+   - Pseudocode for:
+       * Key generation
+       * SSH config entry generation
+       * Repo URL parsing
+       * Verification tests (ssh handshake, ls-remote, test push)
+   - Best practices for long-term scalability & security.
+
+Design the system with extreme clarity, correctness, and production engineering mindset.
+Make no assumptions about provider-specific APIs. Everything must work on pure SSH Git.
