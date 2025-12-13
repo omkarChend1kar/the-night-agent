@@ -1,0 +1,36 @@
+id: apply_fix_flow
+namespace: nightagent
+
+inputs:
+  - name: fixId
+    type: STRING
+    required: true
+  - name: repoPath
+    type: STRING
+    defaults: "/Users/apple/Development/projects/the-night-agent" # Default for demo
+  - name: branch
+    type: STRING
+    required: true
+
+tasks:
+  - id: run_cline_agent
+    type: io.kestra.plugin.scripts.python.Script
+    inputFiles:
+      bedrock_agent.py: "{{ read('backend/agents/bedrock_agent.py') }}"
+      apply_fix_agent.py: "{{ read('backend/agents/apply_fix_agent.py') }}"
+    script: |
+      import sys
+      sys.path.append('.')
+      from apply_fix_agent import ApplyFixAgent
+      
+      # Run cline wrapper
+      ApplyFixAgent().run('{{ inputs.fixId }}', '{{ inputs.repoPath }}', '{{ inputs.branch }}')
+
+  - id: update_status
+    type: io.kestra.plugin.scripts.node.Script
+    script: |
+      const axios = require('axios');
+      axios.post('http://host.docker.internal:3001/api/internal/anomalies/status', {
+        id: '{{ inputs.fixId }}',
+        status: 'SANDBOX_READY'
+      });

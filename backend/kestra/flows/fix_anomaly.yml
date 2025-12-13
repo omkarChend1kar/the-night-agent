@@ -1,0 +1,53 @@
+id: fix_anomaly
+namespace: nightagent
+
+inputs:
+  - name: anomalyId
+    type: STRING
+    required: true
+
+tasks:
+  - id: analyze_and_fix
+    type: io.kestra.plugin.scripts.python.Script
+    inputFiles:
+      analyst_agent.py: "{{ read('backend/agents/analyst_agent.py') }}"
+      propose_fix_agent.py: "{{ read('backend/agents/propose_fix_agent.py') }}"
+      bedrock_agent.py: "{{ read('backend/agents/bedrock_agent.py') }}"
+    script: |
+      import sys
+      import os
+      
+      # Setup paths
+      sys.path.append('.')
+      
+      # Env vars for Agents
+      os.environ['API_URL'] = 'http://host.docker.internal:3001/api/internal'
+      os.environ['REPO_PATH'] = os.getcwd() 
+      
+      from analyst_agent import AnalystAgent
+      from propose_fix_agent import ProposeFixAgent
+      
+      anomaly_id = '{{ inputs.anomalyId }}'
+      print(f"🚀 Starting Fix Workflow for Anomaly {anomaly_id}")
+      
+      # --- STEP 1: ANALYST ---
+      print("\n🕵️‍♀️ Running Analyst Agent...")
+      try:
+          AnalystAgent().run(anomaly_id)
+      except Exception as e:
+          print(f"❌ Analyst Agent Failed: {e}")
+          sys.exit(1)
+          
+      print("✅ Analysis Complete & Saved.")
+      
+      # --- STEP 2: PROPOSER ---
+      print("\n🛠️ Running Propose Fix Agent (Cline)...")
+      
+      try:
+          ProposeFixAgent().run(anomaly_id)
+      except Exception as e:
+           print(f"❌ Propose Fix Agent Failed: {e}")
+           sys.exit(1)
+
+      print("\n🏁 Workflow Completed.")
+

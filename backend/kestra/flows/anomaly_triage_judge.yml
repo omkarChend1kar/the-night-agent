@@ -1,0 +1,45 @@
+id: anomaly_triage_judge
+namespace: nightagent
+
+triggers:
+  - id: schedule
+    type: io.kestra.core.models.triggers.types.Schedule
+    cron: "*/15 * * * *"
+
+tasks:
+  - id: fetch_pending
+    type: io.kestra.plugin.scripts.node.Script
+    outputFiles:
+      - anomalies.json
+    inputFiles:
+      main.js: |
+        const axios = require('axios');
+        const fs = require('fs');
+
+        (async () => {
+          try {
+            const res = await axios.get('http://host.docker.internal:3001/api/internal/anomalies/pending');
+            const anomalies = res.data;
+            console.log(`Fetched ${anomalies.length} pending anomalies.`);
+            fs.writeFileSync('anomalies.json', JSON.stringify(anomalies));
+          } catch (e) {
+            console.error(e);
+            process.exit(1);
+          }
+        })();
+
+  - id: judge_loop
+    type: io.kestra.plugin.scripts.python.Script
+    inputFiles:
+      bedrock_agent.py: "{{ read('backend/agents/bedrock_agent.py') }}"
+      validator_agent.py: "{{ read('backend/agents/validator_agent.py') }}"
+    script: |
+       # Ensure we can import from local dir
+       import sys
+       sys.path.append('.')
+       
+       from validator_agent import ValidatorAgent
+       
+       # Trigger logic
+       agent = ValidatorAgent()
+       agent.run()

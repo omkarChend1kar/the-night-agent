@@ -1,0 +1,33 @@
+id: merge_fix_flow
+namespace: nightagent
+
+inputs:
+  - name: fixId
+    type: STRING
+    required: true
+  - name: repoPath
+    type: STRING
+    defaults: "/Users/apple/Development/projects/the-night-agent"
+  - name: branch
+    type: STRING
+    required: true
+
+tasks:
+  - id: git_merge
+    type: io.kestra.plugin.scripts.shell.Script
+    script: |
+      cd {{ inputs.repoPath }}
+      git checkout main
+      git pull origin main
+      git merge {{ inputs.branch }}
+      git push origin main
+      echo "Merged {{ inputs.branch }} to main"
+
+  - id: update_status
+    type: io.kestra.plugin.scripts.node.Script
+    script: |
+      const axios = require('axios');
+      axios.post('http://host.docker.internal:3001/api/internal/anomalies/status', {
+        id: '{{ inputs.fixId }}',
+        status: 'RESOLVED'
+      });
