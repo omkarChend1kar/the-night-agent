@@ -13,10 +13,11 @@ export interface FixProposal {
     id: string;
     anomalyId: string;
     summary: string;
+    explanation?: string;
     diff: string;
     branch: string;
     confidence: number;
-    status: 'pending' | 'approved' | 'rejected' | 'applied';
+    status: 'pending' | 'approved' | 'rejected' | 'applied' | 'applied_sandbox' | 'merged';
 }
 
 export interface ApplyResult {

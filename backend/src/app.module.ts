@@ -16,9 +16,11 @@ import { PrismaService } from './prisma.service';
 import { SshConfigService } from './services/ssh-config.service';
 import { VerificationService } from './services/verification.service';
 
+import { InternalController } from './api/internal.controller';
+
 @Module({
   imports: [AuthModule],
-  controllers: [AppController, SidecarController, FrontendController, SidecarScriptController],
+  controllers: [AppController, SidecarController, FrontendController, SidecarScriptController, InternalController],
   providers: [
     PrismaService,
     AppService,

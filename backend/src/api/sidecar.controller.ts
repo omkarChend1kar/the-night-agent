@@ -1,11 +1,13 @@
 import { Controller, Post, Body, Inject } from '@nestjs/common';
 import { AnomalyService } from '../services/anomaly.service';
+import { PrismaService } from '../prisma.service';
 
 @Controller('api/sidecar')
 export class SidecarController {
     constructor(
         @Inject('WorkflowEngine') private workflowEngine: any,
         private anomalyService: AnomalyService,
+        private prisma: PrismaService,
     ) { }
 
     @Post('register')
@@ -17,28 +19,50 @@ export class SidecarController {
     @Post('anomaly')
     async reportAnomaly(@Body() anomaly: any) {
         console.log('Received anomaly', anomaly);
-        // Assume sidecar injects its ID or we parse it from headers/body
-        // For MVP, we assumed 'sidecarId' is in the body or known?
-        // Let's assume the Sidecar Script sends 'sidecarId' in the body.
         const sidecarId = anomaly.sidecarId || 'unknown';
-        const repoId = sidecarId.replace('sidecar-', '');
+        // Extract repoId from sidecarId (e.g. "sidecar-uuid" -> "uuid")
+        let repoId = sidecarId.replace('sidecar-', '');
 
         let savedAnomaly;
         try {
-            // Check if repo exists to be safe
-            // const repo = await this.prisma.repo.find... (skipped for speed)
+            // Verify if repo exists
+            const repo = await this.prisma.repository.findUnique({ where: { id: repoId } });
+
+            if (!repo) {
+                // Fallback: Check if we have an "Unassigned" repo or create one for demo purposes
+                const defaultUser = await this.prisma.user.findFirst();
+                if (defaultUser) {
+                    let fallbackRepo = await this.prisma.repository.findFirst({ where: { url: 'UNKNOWN_REPO' } });
+                    if (!fallbackRepo) {
+                        fallbackRepo = await this.prisma.repository.create({
+                            data: {
+                                url: 'UNKNOWN_REPO',
+                                protocol: 'https',
+                                userId: defaultUser.id,
+                                id: 'generic-fallback-repo'
+                            }
+                        });
+                    }
+                    repoId = fallbackRepo.id;
+                } else {
+                    // No users at all? Edge case.
+                    console.warn('No users found to attach fallback repo.');
+                }
+            }
 
             savedAnomaly = await this.anomalyService.addAnomaly(anomaly, repoId);
+
+            if (!savedAnomaly) {
+                return { status: 'filtered', message: 'Anomaly dropped by noise filter' };
+            }
+
         } catch (e) {
             console.error('Failed to save anomaly', e);
-            // Fallback for mocked sidecars without valid IDs
-            savedAnomaly = await this.anomalyService.addAnomaly(anomaly, 'unknown-repo');
+            return { status: 'error', message: e.message };
         }
 
-        // Trigger fix workflow (pass ID)
-        // Workflow Engine will call AnomalyService using this ID, which now fetches from DB
-        const executionId = await this.workflowEngine.startFixWorkflow(savedAnomaly.id);
-        return { status: 'received', executionId };
+        // Workflow is now triggered inside AnomalyService if priority is high enough
+        return { status: 'received', anomalyId: savedAnomaly.id };
     }
 
     @Post('heartbeat')

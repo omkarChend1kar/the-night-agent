@@ -20,7 +20,8 @@ export class EncryptionService implements OnModuleInit {
     private readonly keyPath = path.join(this.keyDir, 'night_agent_id_rsa');
 
     async onModuleInit() {
-        await this.ensureGlobalKey();
+        // Global key generation disabled to enforce per-client key architecture.
+        // await this.ensureGlobalKey();
     }
 
     async ensureGlobalKey() {

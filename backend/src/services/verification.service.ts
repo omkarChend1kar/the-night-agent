@@ -1,15 +1,16 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { exec } from 'child_process';
-import { promisify } from 'util';
+import { Injectable, Logger, Inject } from '@nestjs/common';
 import { PrismaService } from '../prisma.service';
+import type { GitManager } from '../integrations/git/git-manager.interface';
 
-const execAsync = promisify(exec);
 
 @Injectable()
 export class VerificationService {
     private readonly logger = new Logger(VerificationService.name);
 
-    constructor(private prisma: PrismaService) { }
+    constructor(
+        private prisma: PrismaService,
+        @Inject('GitManager') private gitManager: GitManager
+    ) { }
 
     async verifyRepo(repoId: string): Promise<{
         success: boolean;
@@ -40,40 +41,56 @@ export class VerificationService {
         const gitUrl = `git@${alias}:${pathPart}`;
         logs.push(`Target URL: ${gitUrl}`);
 
-        // 1. Handshake (ssh -T)
-        // GitHub returns exit code 1 but prints "Hi <user>..."
+        // 1. Handshake (Connection Check)
         try {
-            logs.push(`Running: ssh -T git@${alias}`);
-            await execAsync(`ssh -T -o StrictHostKeyChecking=accept-new git@${alias}`);
-            checks.handshake = true; // If exit code 0 (GitLab/Bitbucket sometimes)
-        } catch (e: any) {
-            const output = e.stderr || e.stdout;
-            if (output && output.includes('successfully authenticated')) {
-                checks.handshake = true;
-                logs.push('Handshake Success (Authenticated)');
+            logs.push(`Checking Connection (ls-remote)...`);
+            const connected = await this.gitManager.checkConnection(gitUrl);
+            checks.handshake = connected;
+            if (connected) {
+                logs.push('Connection Successful');
             } else {
-                logs.push(`Handshake Failed: ${e.message}`);
+                logs.push('Connection Failed');
             }
+        } catch (e: any) {
+            logs.push(`Connection Check Error: ${e.message}`);
         }
 
-        // 2. Read Check (ls-remote)
+        // 2. Read Check
         if (checks.handshake) {
             try {
-                logs.push(`Running: git ls-remote ${gitUrl} HEAD`);
-                await execAsync(`git ls-remote ${gitUrl} HEAD`);
-                checks.read = true;
-                logs.push('Read Access Confirmed');
+                logs.push(`Verifying Read Access...`);
+                const canRead = await this.gitManager.checkReadAccess(gitUrl);
+                checks.read = canRead;
+                if (canRead) {
+                    logs.push('Read Access Confirmed');
+                } else {
+                    logs.push('Read Access Failed');
+                }
             } catch (e: any) {
-                logs.push(`Read Check Failed: ${e.message}`);
+                logs.push(`Read Check Error: ${e.message}`);
             }
         }
 
-        // 3. Write Check (Mock for now or real push)
-        // For safety, let's skip real push unless user explicitly requested "Danger Mode"
-        // checks.write = true; // Skip for MVP
+        // 3. Write Check
+        if (checks.read) {
+            try {
+                logs.push(`Verifying Write Access (Dry Run)...`);
+                const canWrite = await this.gitManager.checkWriteAccess(gitUrl);
+                checks.write = canWrite;
+                if (canWrite) {
+                    logs.push('Write Access Confirmed');
+                } else {
+                    logs.push('Write Access Failed (Push Rejected or Auth Error)');
+                }
+            } catch (e: any) {
+                logs.push(`Write Check Error: ${e.message}`);
+            }
+        }
 
         return {
-            success: checks.handshake && checks.read,
+            success: checks.handshake && checks.read, // Success if at least read is possible. Write is optional/advanced? 
+            // Actually, for "The Night Agent", we need write. But maybe for onboarding, read is minimum?
+            // Let's keep it as read required for basic success, but exposing all checks.
             checks,
             logs
         };
