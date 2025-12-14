@@ -110,7 +110,14 @@ export class AnomalyService {
     }
 
     async getAnomaly(id: string) {
-        const r = await this.prisma.anomaly.findUnique({ where: { id }, include: { repo: true } });
+        const r = await this.prisma.anomaly.findUnique({
+            where: { id },
+            include: {
+                repo: {
+                    include: { user: true }
+                }
+            }
+        });
         if (!r) return null;
         return {
             id: r.id,
@@ -118,7 +125,8 @@ export class AnomalyService {
             repoUrl: r.repo.url,
             repoProtocol: r.repo.protocol,
             encryptedCreds: r.repo.encryptedCreds,
-            status: r.status
+            status: r.status,
+            sshAlias: r.repo.sshConfigAlias || (r.repo.user as any)?.sshAlias
         };
     }
 

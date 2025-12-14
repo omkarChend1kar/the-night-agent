@@ -5,11 +5,14 @@ import * as otplib from 'otplib';
 import * as qrcode from 'qrcode';
 import { PrismaService } from '../prisma.service';
 
+import { GitIdentityService } from '../services/git-identity.service';
+
 @Injectable()
 export class AuthService {
     constructor(
         private jwtService: JwtService,
-        private prisma: PrismaService
+        private prisma: PrismaService,
+        private gitIdentity: GitIdentityService
     ) { }
 
     async signup(email: string, password: string, name?: string) {
@@ -23,9 +26,28 @@ export class AuthService {
                     isMfaEnabled: false,
                 },
             });
-            return { id: user.id, email: user.email, name: user.name };
+
+            // Generate SSH Identity
+            try {
+                const { publicKey } = await this.gitIdentity.ensureIdentity(user.id, user.email);
+
+                // Save public key to DB
+                await this.prisma.user.update({
+                    where: { id: user.id },
+                    data: { publicKey }
+                });
+
+                return { id: user.id, email: user.email, name: user.name, publicKey };
+
+            } catch (err) {
+                console.error(`Failed to generate SSH identity for ${user.id}:`, err);
+                // We don't rollback user creation, but log error. User can retry key gen later if we add an endpoint.
+                // Or maybe throw? For now, proceed but warn.
+                return { id: user.id, email: user.email, name: user.name, warning: "SSH Key generation failed" };
+            }
+
         } catch (e) {
-            throw new Error('User already exists');
+            throw new Error(e.message || 'User already exists');
         }
     }
 
