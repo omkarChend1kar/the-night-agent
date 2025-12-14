@@ -53,8 +53,14 @@ export class AnomalyService {
 
     private evaluateAnomaly(dto: any): { process: boolean; score: number } {
         const type = dto.anomaly_type || 'Unknown';
-        // Handle varying severity formats
-        const severity = (dto.severity || dto.level || 'INFO').toUpperCase();
+        // Handle varying severity formats - also check for "high"/"medium"/"low" and map them
+        let severity = (dto.severity || dto.level || 'INFO').toUpperCase();
+
+        // Map confidence-based severity to standard levels
+        if (severity === 'HIGH') severity = 'ERROR';
+        else if (severity === 'MEDIUM') severity = 'WARN';
+        else if (severity === 'LOW') severity = 'INFO';
+
         // Check for user/tenant context in various places
         const context = dto.context || {};
         const userId = dto.user_id || context.user_id || dto.userId || context.tenant_scope;
@@ -78,6 +84,10 @@ export class AnomalyService {
         if (type === 'Frequency Anomaly') score += 30; // Spikes are important
         if (type === 'Latency Anomaly') score += 30;   // UX impact
         if (type === 'Log-Sequence Anomaly') score += 20;
+        // Add bonus for Novel Log Template when severity is ERROR or WARN
+        if (type === 'Novel Log Template' && (severity === 'ERROR' || severity === 'WARN')) {
+            score += 20; // Boost novel errors/warnings
+        }
 
         // RULE 4: User Impact (The "Hindering User Experience" Check)
         if (userId) {
@@ -99,8 +109,8 @@ export class AnomalyService {
         return records.map(r => {
             const activeFix = this.getFixByAnomalyId(r.id);
             return {
-                id: r.id,
                 ...JSON.parse(r.context),
+                id: r.id, // Explicitly ensure DB ID takes precedence over context ID
                 repoUrl: r.repo.url,
                 status: r.status,
                 createdAt: r.createdAt,
@@ -221,7 +231,7 @@ export class AnomalyService {
         let repoPath = '';
         const path = require('path');
         const fs = require('fs');
-        
+
         try {
             const parts = repoUrl.split(/[:/]/);
             const repo = parts.pop()?.replace('.git', '');
@@ -231,11 +241,18 @@ export class AnomalyService {
                 repoPath = path.isAbsolute(workspaceRoot)
                     ? path.join(workspaceRoot, owner, repo)
                     : path.join(process.cwd(), workspaceRoot, owner, repo);
-                
+
                 console.log(`[AnomalyService] Local repo path: ${repoPath}`);
             }
-        } catch (e) { 
+        } catch (e) {
             console.error('[AnomalyService] Failed to reconstruct repo path:', e);
+        }
+
+        // [Self-Healing] Ensure repo exists before operating on it
+        if (repoPath && !fs.existsSync(repoPath)) {
+            console.log(`[AnomalyService] Repo missing at ${repoPath}. Cloning from ${repoUrl}...`);
+            // Assuming public repo or credentials handled by manager/url
+            await this.gitManager.cloneRepo(repoUrl, anomaly.repo.encryptedCreds || '', repoPath);
         }
 
         if (!fix.branch) {
@@ -249,25 +266,25 @@ export class AnomalyService {
             // Apply fix directly using git commands (simpler than Kestra for local dev)
             const simpleGit = require('simple-git');
             const git = simpleGit(repoPath);
-            
+
             // Ensure we have the patch
             if (!fix.diff) {
                 throw new Error('No patch content in fix proposal');
             }
-            
+
             // Save patch to temp file
             const patchFile = path.join(repoPath, '.temp-fix.patch');
             fs.writeFileSync(patchFile, fix.diff);
             console.log(`[AnomalyService] Patch saved to ${patchFile}`);
-            
+
             try {
                 // Checkout main branch
                 await git.checkout('main').catch(() => git.checkout('master'));
-                await git.pull('origin', 'main').catch(() => git.pull('origin', 'master').catch(() => {}));
-                
+                await git.pull('origin', 'main').catch(() => git.pull('origin', 'master').catch(() => { }));
+
                 // Create and checkout fix branch
                 await git.checkoutLocalBranch(fix.branch).catch(() => git.checkout(fix.branch));
-                
+
                 // Apply the patch (try --3way for better conflict handling)
                 let patchApplied = false;
                 try {
@@ -277,12 +294,12 @@ export class AnomalyService {
                 } catch (applyError: any) {
                     console.warn('[AnomalyService] Patch apply failed:', applyError.message);
                 }
-                
+
                 // Cleanup temp file BEFORE staging
                 if (fs.existsSync(patchFile)) {
                     fs.unlinkSync(patchFile);
                 }
-                
+
                 // Stage and commit if changes were made
                 const status = await git.status();
                 if (patchApplied && status.files.length > 0) {
@@ -292,7 +309,7 @@ export class AnomalyService {
                 } else {
                     console.log('[AnomalyService] No changes to commit (patch may not have applied cleanly)');
                 }
-                
+
             } catch (innerError: any) {
                 // Cleanup temp file on error
                 if (fs.existsSync(patchFile)) {
@@ -303,7 +320,7 @@ export class AnomalyService {
 
             fix.status = 'applied_sandbox';
             this.fixes.set(fixId, fix);
-            
+
             // Update anomaly status
             await this.prisma.anomaly.update({
                 where: { id: fix.anomalyId },
@@ -337,7 +354,7 @@ export class AnomalyService {
         const repoUrl = anomaly.repo.url;
         let repoPath = '';
         const path = require('path');
-        
+
         try {
             const parts = repoUrl.split(/[:/]/);
             const repo = parts.pop()?.replace('.git', '');
@@ -360,42 +377,42 @@ export class AnomalyService {
         try {
             const simpleGit = require('simple-git');
             const git = simpleGit(repoPath);
-            
+
             // Checkout target branch
             console.log(`[AnomalyService] Checking out ${targetBranch}...`);
             await git.checkout(targetBranch);
-            
+
             // Merge the fix branch
             console.log(`[AnomalyService] Merging ${fix.branch} into ${targetBranch}...`);
             await git.merge([fix.branch, '--no-ff', '-m', `Merge fix: ${fixId}`]);
-            
+
             console.log(`[AnomalyService] Merge successful!`);
-            
+
             // Push the merged changes to remote
             console.log(`[AnomalyService] Pushing to origin/${targetBranch}...`);
             await git.push('origin', targetBranch);
             console.log(`[AnomalyService] Push successful!`);
-            
+
             // Update fix status
             fix.status = 'merged';
             this.fixes.set(fixId, fix);
-            
+
             // Update anomaly status
             await this.prisma.anomaly.update({
                 where: { id: fix.anomalyId },
                 data: { status: 'RESOLVED' }
             });
-            
+
             // Delete the fix branch (local and remote)
             try {
                 await git.deleteLocalBranch(fix.branch);
                 console.log(`[AnomalyService] Deleted local fix branch ${fix.branch}`);
                 // Also delete remote fix branch if it exists
-                await git.push('origin', `:${fix.branch}`).catch(() => {});
+                await git.push('origin', `:${fix.branch}`).catch(() => { });
             } catch (e) {
                 console.warn(`[AnomalyService] Could not delete fix branch: ${e}`);
             }
-            
+
             return { status: 'merged_and_pushed', targetBranch };
         } catch (e: any) {
             console.error('Merge failed:', e);
@@ -481,17 +498,17 @@ export class AnomalyService {
     async getBranches(fixId: string) {
         const fix = await this.ensureFix(fixId);
         if (!fix) return ['main'];
-        
+
         // Get the repo path for this fix
         const anomaly = await this.prisma.anomaly.findUnique({
             where: { id: fix.anomalyId },
             include: { repo: true }
         });
-        
+
         if (!anomaly || !anomaly.repo) {
             return ['main'];
         }
-        
+
         // Reconstruct repo path
         const repoUrl = anomaly.repo.url;
         let repoPath = '';
@@ -510,9 +527,9 @@ export class AnomalyService {
             console.warn('[AnomalyService] Failed to reconstruct repo path for branches:', e);
             return ['main'];
         }
-        
+
         if (!repoPath) return ['main'];
-        
+
         // Get real branches from the repo
         try {
             const branches = await this.gitManager.getBranches(repoPath);

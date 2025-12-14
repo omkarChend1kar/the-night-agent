@@ -35,13 +35,31 @@ def send_anomaly(anomaly_data):
     """
     Sends structured anomaly event to the backend.
     """
+    # Extract severity from the original log line
+    # The detector should have extracted it, but we need to get it from the evidence
+    log_line = anomaly_data.get('evidence', {}).get('log', '')
+    detected_severity = 'INFO'  # Default
+    
+    # Try to detect severity from log line
+    log_upper = log_line.upper()
+    if '❌' in log_line or 'ERROR:' in log_upper or 'ERROR ' in log_upper:
+        detected_severity = 'ERROR'
+    elif '⚠️' in log_line or 'WARN:' in log_upper or 'WARNING:' in log_upper:
+        detected_severity = 'WARN'
+    elif 'CRITICAL:' in log_upper or 'FATAL:' in log_upper:
+        detected_severity = 'CRITICAL'
+    elif 'INFO:' in log_upper:
+        detected_severity = 'INFO'
+    elif 'DEBUG:' in log_upper:
+        detected_severity = 'DEBUG'
+    
     # Construct payload matching the user requirements + backend expectation
     payload = {
         "id": f"evt-{uuid.uuid4()}",
         "sidecarId": SIDECAR_ID or f"sidecar-{SERVICE_ID}", 
         "serviceId": SERVICE_ID,
         "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
-        "severity": "high" if anomaly_data['confidence'] > 0.8 else "medium",
+        "severity": detected_severity,  # Use actual severity from log, not confidence-based
         "message": anomaly_data['summary'],
         "logs": [anomaly_data['evidence']['log']],
         "traceId": f"trace-{uuid.uuid4()}",
@@ -63,12 +81,19 @@ def send_anomaly(anomaly_data):
 
 def handle_log_line(line):
     # Pass directly to our new statistical detector
-    anomaly = detector.check(line)
-    
-    if anomaly:
-        # We found something interesting
-        print(f"🚨 {anomaly['summary']} (Conf: {anomaly['confidence']})")
-        send_anomaly(anomaly)
+    try:
+        anomaly = detector.check(line)
+        
+        if anomaly:
+            # We found something interesting
+            logger.info(f"🚨 ANOMALY DETECTED: {anomaly['summary']} (Conf: {anomaly['confidence']})")
+            print(f"🚨 {anomaly['summary']} (Conf: {anomaly['confidence']})")
+            send_anomaly(anomaly)
+        else:
+            # Log when detector is called but no anomaly (for debugging) - use INFO level for visibility
+            logger.info(f"Line processed, no anomaly detected: {line[:80]}...")
+    except Exception as e:
+        logger.error(f"Error processing log line: {e}", exc_info=True)
 
 def main():
     logger.info("=" * 50)

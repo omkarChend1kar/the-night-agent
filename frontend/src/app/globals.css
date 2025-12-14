@@ -68,6 +68,10 @@
   /* VSCode Editor Background */
   border-bottom: 1px solid #30363D !important;
   padding: 8px 16px !important;
+  display: flex !important;
+  align-items: center !important;
+  justify-content: flex-start !important;
+  gap: 8px !important;
 }
 
 .d2h-file-name {
@@ -76,6 +80,12 @@
   font-family: var(--font-mono);
   font-size: 13px;
   font-weight: 500;
+}
+
+.d2h-file-name-wrapper {
+  display: flex !important;
+  align-items: center !important;
+  gap: 8px !important;
 }
 
 .d2h-file-stats {

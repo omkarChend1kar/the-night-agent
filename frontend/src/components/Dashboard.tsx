@@ -3,20 +3,27 @@ import { useAnomalyBloc } from '../bloc/useAnomalyBloc';
 import * as Diff2Html from 'diff2html';
 import 'diff2html/bundles/css/diff2html.min.css';
 import { useEffect, useState } from 'react';
+import { useRouter } from 'next/navigation';
 
 export default function Dashboard() {
   const { state, actions, derived } = useAnomalyBloc();
   const { selectedAnomaly } = derived;
+  const router = useRouter();
 
   const [diffHtml, setDiffHtml] = useState<string | null>(null);
   const [sandboxDiffHtml, setSandboxDiffHtml] = useState<string | null>(null);
+
+  const handleSignOut = () => {
+    localStorage.removeItem('token');
+    router.push('/login');
+  };
 
   // Render proposed fix diff
   useEffect(() => {
     if (selectedAnomaly?.generated_patch) {
       try {
         const html = (Diff2Html as any).html(selectedAnomaly.generated_patch, {
-          drawFileList: true,
+          drawFileList: false, // Cleaner UI, avoid distortions
           matching: 'lines',
           outputFormat: 'side-by-side',
           renderNothingWhenEmpty: true,
@@ -36,7 +43,7 @@ export default function Dashboard() {
     if (derived.sandboxDiff) {
       try {
         const html = (Diff2Html as any).html(derived.sandboxDiff, {
-          drawFileList: true,
+          drawFileList: false, // Cleaner UI
           matching: 'lines',
           outputFormat: 'side-by-side',
           renderNothingWhenEmpty: true,
@@ -147,6 +154,13 @@ export default function Dashboard() {
             <span className="text-gray-500 text-xs tracking-widest uppercase font-bold">Operation Center</span>
           </div>
           <div className="flex items-center gap-4">
+            <button
+              onClick={handleSignOut}
+              className="px-4 py-2 text-xs font-bold text-gray-400 hover:text-red-400 hover:bg-red-500/10 border border-white/10 hover:border-red-500/30 rounded transition-all duration-200 uppercase tracking-wider"
+              title="Sign Out"
+            >
+              Sign Out
+            </button>
             <button className="text-gray-500 hover:text-white transition-colors">
               <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
             </button>
@@ -269,7 +283,7 @@ export default function Dashboard() {
                 <section className="animate-in fade-in slide-in-from-bottom-2 duration-500">
                   <AgentHeader name="CODE REVIEW" status={selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? 'MERGED' : 'ACTION REQUIRED'} />
                   <div className="pl-4 border-l border-white/5">
-                    
+
                     {/* Applied Fix Diff Viewer */}
                     <div className="bg-[#0D1117] border border-emerald-500/20 rounded-lg overflow-hidden text-sm font-mono shadow-2xl mb-6">
                       <div className="border-b border-white/5 px-4 py-3 bg-emerald-500/10 flex justify-between items-center">
@@ -298,8 +312,8 @@ export default function Dashboard() {
                         {selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? 'Merge Complete' : 'Ready for Merge'}
                       </h4>
                       <p className="text-xs text-gray-400 mb-4">
-                        {selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' 
-                          ? 'Changes have been successfully merged to the target branch.' 
+                        {selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged'
+                          ? 'Changes have been successfully merged to the target branch.'
                           : 'Review the applied changes above. Approve to merge or request adjustments.'}
                       </p>
 
@@ -397,7 +411,7 @@ export default function Dashboard() {
                               }}
                               className="px-6 py-2 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2 h-[38px]"
                             >
-                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" /></svg>
                               <span>MERGE & PUSH</span>
                             </button>
                           </>

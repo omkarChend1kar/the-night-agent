@@ -64,11 +64,29 @@ class FeatureExtractor:
             # Fallback for plain text
             data['message'] = line
 
+        # Extract severity from log line if not in JSON
+        detected_severity = data.get('level', data.get('severity', None))
+        if not detected_severity:
+            # Try to detect severity from log message text
+            line_upper = line.upper()
+            if '❌' in line or 'ERROR:' in line_upper or 'ERROR ' in line_upper:
+                detected_severity = 'ERROR'
+            elif '⚠️' in line or 'WARN:' in line_upper or 'WARNING:' in line_upper:
+                detected_severity = 'WARN'
+            elif 'CRITICAL:' in line_upper or 'FATAL:' in line_upper:
+                detected_severity = 'CRITICAL'
+            elif 'INFO:' in line_upper:
+                detected_severity = 'INFO'
+            elif 'DEBUG:' in line_upper:
+                detected_severity = 'DEBUG'
+            else:
+                detected_severity = 'INFO'  # Default
+        
         # Standardize fields
         features = {
             'raw': line,
             'timestamp': self.extract_timestamp_value(line, data),
-            'severity': data.get('level', data.get('severity', 'INFO')).upper(),
+            'severity': detected_severity.upper(),
             'message': data.get('message', data.get('msg', line)),
             'module': data.get('module', data.get('component', 'unknown')),
             'request_id': data.get('request_id', data.get('trace_id', data.get('traceId', None))),

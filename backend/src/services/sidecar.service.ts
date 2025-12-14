@@ -86,11 +86,17 @@ export class SidecarService {
 
     /**
      * Generate Docker run command for a sidecar
+     * First builds the image, then runs it
      */
     generateDockerCommand(sidecar: any, backendUrl?: string): string {
         const baseUrl = backendUrl || process.env.BACKEND_PUBLIC_URL || 'http://host.docker.internal:3001';
+        const imageTag = `night-agent-sidecar:${sidecar.id.substring(0, 8)}`;
         
-        return `docker run -d \\
+        return `# Step 1: Build the sidecar image (run this from the project root)
+docker build -t ${imageTag} -f sidecar/Dockerfile sidecar/
+
+# Step 2: Run the sidecar container
+docker run -d \\
   --name night-agent-sidecar-${sidecar.id.substring(0, 8)} \\
   --restart unless-stopped \\
   -e SIDECAR_ID="${sidecar.id}" \\
@@ -99,7 +105,7 @@ export class SidecarService {
   -e SERVICE_ID="${sidecar.serviceId || 'my-service'}" \\
   -e LOG_PATH="${sidecar.logPath || '/app/logs/app.log'}" \\
   -v /path/to/your/logs:/app/logs:ro \\
-  ghcr.io/your-org/night-agent-sidecar:latest`;
+  ${imageTag}`;
     }
 
     /**
@@ -109,10 +115,15 @@ export class SidecarService {
         const baseUrl = backendUrl || process.env.BACKEND_PUBLIC_URL || 'http://host.docker.internal:3001';
         
         return `# Add this to your docker-compose.yml
+# Note: First build the sidecar image:
+#   docker build -t night-agent-sidecar:local -f sidecar/Dockerfile sidecar/
+
 services:
   night-agent-sidecar:
-    image: ghcr.io/your-org/night-agent-sidecar:latest
-    container_name: night-agent-sidecar
+    build:
+      context: .
+      dockerfile: sidecar/Dockerfile
+    container_name: night-agent-sidecar-${sidecar.id.substring(0, 8)}
     restart: unless-stopped
     environment:
       - SIDECAR_ID=${sidecar.id}

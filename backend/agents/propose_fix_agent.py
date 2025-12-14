@@ -30,8 +30,9 @@ class ProposeFixAgent:
                 return
             
             anomaly = res.json()
-            context = json.loads(anomaly.get('context', '{}'))
-            analysis = context.get('root_cause_analysis')
+            # The getAnomaly API spreads the context into the response object
+            # So root_cause_analysis is at the top level, not inside context
+            analysis = anomaly.get('root_cause_analysis')
             
             if not analysis:
                 self.logger.error("No Root Cause Analysis found in anomaly context.")
