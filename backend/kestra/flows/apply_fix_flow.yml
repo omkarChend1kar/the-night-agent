@@ -1,36 +1,97 @@
 id: apply_fix_flow
 namespace: nightagent
+description: "Applies a fix proposal to a repository branch using the ApplyFixAgent"
 
 inputs:
   - name: fixId
     type: STRING
     required: true
+    description: "The ID of the fix proposal to apply"
   - name: repoPath
     type: STRING
-    defaults: "/Users/apple/Development/projects/the-night-agent" # Default for demo
+    required: true
+    description: "Absolute path to the local repository"
   - name: branch
     type: STRING
     required: true
+    description: "The branch name to create/update with the fix"
 
 tasks:
-  - id: run_cline_agent
-    type: io.kestra.plugin.scripts.python.Script
-    inputFiles:
-      bedrock_agent.py: "{{ read('backend/agents/bedrock_agent.py') }}"
-      apply_fix_agent.py: "{{ read('backend/agents/apply_fix_agent.py') }}"
-    script: |
-      import sys
-      sys.path.append('.')
-      from apply_fix_agent import ApplyFixAgent
-      
-      # Run cline wrapper
-      ApplyFixAgent().run('{{ inputs.fixId }}', '{{ inputs.repoPath }}', '{{ inputs.branch }}')
+  - id: apply_fix_agent
+    type: io.kestra.plugin.scripts.shell.Commands
+    description: "Runs the ApplyFixAgent to apply the fix patch to the repository"
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      image: alpine/git:latest
+      pullPolicy: IF_NOT_PRESENT
+      volumes:
+        - /Users/apple/Development/projects/the-night-agent:/workspace
+    env:
+      API_URL: "http://host.docker.internal:3001/api/internal"
+      FIX_ID: "{{ inputs.fixId }}"
+      REPO_PATH: "{{ inputs.repoPath }}"
+      BRANCH: "{{ inputs.branch }}"
+    commands:
+      - echo "=== Apply Fix Agent ==="
+      - echo "Fix ID - $FIX_ID"
+      - echo "Repo Path - $REPO_PATH"
+      - echo "Branch - $BRANCH"
+      - |
+        cd "$REPO_PATH" || { echo "Failed to cd to repo"; exit 1; }
+        
+        # Fetch the patch from backend API
+        echo "Fetching patch from backend..."
+        PATCH=$(curl -s "$API_URL/fix/$FIX_ID" | python3 -c "import sys,json; print(json.load(sys.stdin).get('diff',''))")
+        
+        if [ -z "$PATCH" ]; then
+          echo "No patch found for fix $FIX_ID"
+          exit 1
+        fi
+        
+        # Save patch to temp file
+        echo "$PATCH" > /tmp/fix.patch
+        echo "Patch saved to /tmp/fix.patch"
+        
+        # Checkout main and create fix branch
+        echo "Checking out main branch..."
+        git checkout main 2>/dev/null || git checkout master 2>/dev/null || echo "Could not checkout base branch"
+        git pull origin main 2>/dev/null || git pull origin master 2>/dev/null || echo "Could not pull"
+        
+        echo "Creating branch $BRANCH..."
+        git checkout -b "$BRANCH" 2>/dev/null || git checkout "$BRANCH"
+        
+        # Apply the patch
+        echo "Applying patch..."
+        if git apply /tmp/fix.patch; then
+          echo "Patch applied successfully"
+        else
+          echo "Git apply failed, trying with --3way..."
+          git apply --3way /tmp/fix.patch || echo "Patch application had conflicts"
+        fi
+        
+        # Commit changes
+        echo "Committing changes..."
+        git add -A
+        git status
+        git diff --cached --stat
+        git commit -m "fix: applied automated proposal $FIX_ID" || echo "No changes to commit"
+        
+        echo "=== Apply Fix Complete ==="
 
   - id: update_status
-    type: io.kestra.plugin.scripts.node.Script
-    script: |
-      const axios = require('axios');
-      axios.post('http://host.docker.internal:3001/api/internal/anomalies/status', {
-        id: '{{ inputs.fixId }}',
-        status: 'SANDBOX_READY'
-      });
+    type: io.kestra.plugin.scripts.shell.Commands
+    description: "Updates the anomaly status to SANDBOX_READY after fix is applied"
+    taskRunner:
+      type: io.kestra.plugin.scripts.runner.docker.Docker
+      image: curlimages/curl:latest
+      pullPolicy: IF_NOT_PRESENT
+    env:
+      API_URL: "http://host.docker.internal:3001/api/internal"
+      FIX_ID: "{{ inputs.fixId }}"
+    commands:
+      - |
+        echo "Updating status for fix $FIX_ID..."
+        curl -s -X POST "$API_URL/anomalies/status" \
+          -H "Content-Type: application/json" \
+          -d "{\"id\":\"$FIX_ID\",\"status\":\"SANDBOX_READY\"}"
+        echo "Status update complete"

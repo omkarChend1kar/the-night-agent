@@ -1,6 +1,7 @@
-import { Controller, Post, Body, Inject } from '@nestjs/common';
+import { Controller, Post, Body, Inject, Headers, UnauthorizedException } from '@nestjs/common';
 import { AnomalyService } from '../services/anomaly.service';
 import { PrismaService } from '../prisma.service';
+import { SidecarService } from '../services/sidecar.service';
 
 @Controller('api/sidecar')
 export class SidecarController {
@@ -8,20 +9,72 @@ export class SidecarController {
         @Inject('WorkflowEngine') private workflowEngine: any,
         private anomalyService: AnomalyService,
         private prisma: PrismaService,
+        private sidecarService: SidecarService,
     ) { }
 
+    /**
+     * Validate sidecar API key from header or body
+     */
+    private async validateSidecar(apiKey?: string, sidecarId?: string) {
+        if (apiKey) {
+            const sidecar = await this.sidecarService.validateAndUpdateSidecar(apiKey);
+            if (sidecar) return sidecar;
+        }
+        
+        // Fallback: Try to find by sidecarId for backward compatibility
+        if (sidecarId) {
+            const sidecar = await this.prisma.sidecar.findFirst({
+                where: { id: sidecarId }
+            });
+            if (sidecar) {
+                await this.prisma.sidecar.update({
+                    where: { id: sidecar.id },
+                    data: { lastSeen: new Date(), status: 'active' }
+                });
+                return sidecar;
+            }
+        }
+        
+        return null;
+    }
+
     @Post('register')
-    register(@Body() body: any) {
-        console.log('Sidecar registered', body);
+    async register(
+        @Body() body: any,
+        @Headers('x-sidecar-api-key') apiKey?: string
+    ) {
+        const sidecar = await this.validateSidecar(apiKey, body.sidecarId);
+        if (sidecar) {
+            console.log(`Sidecar registered: ${sidecar.id} (${sidecar.name})`);
+            return { status: 'registered', sidecarId: sidecar.id };
+        }
+        
+        // Allow unregistered sidecars for backward compatibility
+        console.log('Sidecar registered (unverified)', body);
         return { status: 'registered' };
     }
 
     @Post('anomaly')
-    async reportAnomaly(@Body() anomaly: any) {
+    async reportAnomaly(
+        @Body() anomaly: any,
+        @Headers('x-sidecar-api-key') apiKey?: string
+    ) {
         console.log('Received anomaly', anomaly);
-        const sidecarId = anomaly.sidecarId || 'unknown';
-        // Extract repoId from sidecarId (e.g. "sidecar-uuid" -> "uuid")
-        let repoId = sidecarId.replace('sidecar-', '');
+        
+        // Validate sidecar if API key provided
+        const sidecar = await this.validateSidecar(apiKey, anomaly.sidecarId);
+        
+        // Determine repoId
+        let repoId: string;
+        
+        if (sidecar?.repoId) {
+            // Use repo linked to sidecar
+            repoId = sidecar.repoId;
+        } else {
+            // Fallback to sidecarId-based lookup
+            const sidecarId = anomaly.sidecarId || 'unknown';
+            repoId = sidecarId.replace('sidecar-', '');
+        }
 
         let savedAnomaly;
         try {
@@ -66,7 +119,21 @@ export class SidecarController {
     }
 
     @Post('heartbeat')
-    heartbeat() {
+    async heartbeat(
+        @Body() body: any,
+        @Headers('x-sidecar-api-key') apiKey?: string
+    ) {
+        // Validate and update sidecar lastSeen
+        const sidecar = await this.validateSidecar(apiKey, body?.sidecarId);
+        
+        if (sidecar) {
+            return { 
+                status: 'alive', 
+                sidecarId: sidecar.id,
+                name: sidecar.name 
+            };
+        }
+        
         return { status: 'alive' };
     }
 }

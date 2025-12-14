@@ -5,6 +5,8 @@ import { JwtModule } from '@nestjs/jwt';
 import { PassportModule } from '@nestjs/passport';
 import { JwtStrategy } from './jwt.strategy';
 import { PrismaService } from '../prisma.service';
+import { GitIdentityService } from '../services/git-identity.service';
+import { SshConfigService } from '../services/ssh-config.service';
 
 @Module({
     imports: [
@@ -14,8 +16,8 @@ import { PrismaService } from '../prisma.service';
             signOptions: { expiresIn: '60m' },
         }),
     ],
-    providers: [AuthService, JwtStrategy, PrismaService],
+    providers: [AuthService, JwtStrategy, PrismaService, GitIdentityService, SshConfigService],
     controllers: [AuthController],
-    exports: [AuthService],
+    exports: [AuthService, GitIdentityService],
 })
 export class AuthModule { }

@@ -188,24 +188,29 @@ export const useAnomalyBloc = (): AnomalyBloc => {
     const selectedAnomaly = state.anomalies.find(a => a.id === state.selectedId);
     const [diff, setDiff] = useState<string | null>(null);
 
+    // Fetch sandbox diff when fix is applied
+    const isSandboxReady = selectedAnomaly?.status === 'SANDBOX_READY' || selectedAnomaly?.status === 'applied_sandbox';
     useEffect(() => {
-        if (selectedAnomaly?.status === 'SANDBOX_READY') {
+        if (isSandboxReady && selectedAnomaly) {
             axios.get(`${API_BASE}/fix/${selectedAnomaly.id}/diff`, { headers: { Authorization: `Bearer ${getToken()}` } })
                 .then(res => setDiff(res.data.diff))
-                .catch(() => setDiff(null));
+                .catch(() => {
+                    // Fallback to generated patch if real diff not available
+                    setDiff(selectedAnomaly.generated_patch || null);
+                });
         } else {
             setDiff(null);
         }
-    }, [selectedAnomaly?.id, selectedAnomaly?.status]);
+    }, [selectedAnomaly?.id, selectedAnomaly?.status, isSandboxReady, selectedAnomaly?.generated_patch]);
 
     const [branches, setBranches] = useState<string[]>([]);
     useEffect(() => {
-        if (selectedAnomaly?.status === 'SANDBOX_READY') {
+        if (isSandboxReady && selectedAnomaly) {
             axios.get(`${API_BASE}/fix/${selectedAnomaly.id}/branches`, { headers: { Authorization: `Bearer ${getToken()}` } })
-                .then(res => setBranches(res.data.branches))
+                .then(res => setBranches(res.data.branches || ['main']))
                 .catch(() => setBranches(['main']));
         }
-    }, [selectedAnomaly?.id, selectedAnomaly?.status]);
+    }, [selectedAnomaly?.id, selectedAnomaly?.status, isSandboxReady]);
 
     return {
         state,

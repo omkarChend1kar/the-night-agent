@@ -9,12 +9,14 @@ export default function Dashboard() {
   const { selectedAnomaly } = derived;
 
   const [diffHtml, setDiffHtml] = useState<string | null>(null);
+  const [sandboxDiffHtml, setSandboxDiffHtml] = useState<string | null>(null);
 
+  // Render proposed fix diff
   useEffect(() => {
     if (selectedAnomaly?.generated_patch) {
       try {
         const html = (Diff2Html as any).html(selectedAnomaly.generated_patch, {
-          drawFileList: false,
+          drawFileList: true,
           matching: 'lines',
           outputFormat: 'side-by-side',
           renderNothingWhenEmpty: true,
@@ -28,6 +30,26 @@ export default function Dashboard() {
       setDiffHtml(null);
     }
   }, [selectedAnomaly?.generated_patch]);
+
+  // Render sandbox diff (applied fix)
+  useEffect(() => {
+    if (derived.sandboxDiff) {
+      try {
+        const html = (Diff2Html as any).html(derived.sandboxDiff, {
+          drawFileList: true,
+          matching: 'lines',
+          outputFormat: 'side-by-side',
+          renderNothingWhenEmpty: true,
+        });
+        setSandboxDiffHtml(html);
+      } catch (e) {
+        console.error("Sandbox diff rendering failed", e);
+        setSandboxDiffHtml(null);
+      }
+    } else {
+      setSandboxDiffHtml(null);
+    }
+  }, [derived.sandboxDiff]);
 
   // Reusable Agent Header Component
   const AgentHeader = ({ name, status = 'ACTIVE' }: { name: string, status?: string }) => (
@@ -47,9 +69,15 @@ export default function Dashboard() {
         ${selectedAnomaly ? 'hidden md:flex' : 'flex'} 
         w-full md:w-1/4 h-full border-r border-white/5 flex-col bg-black/20
       `}>
-        <header className="p-4 border-b border-white/5 flex justify-between items-center bg-black/40">
-          <span className="uppercase tracking-widest text-xs font-bold text-gray-500">Night Agent // Signals</span>
-          <span className="text-[10px] text-emerald-500 animate-pulse">● MONITORING</span>
+        <header className="p-6 border-b border-white/5 flex items-center gap-4 bg-black/40 h-24">
+          <div className="w-12 h-12 relative shrink-0">
+            {/* Using standard img tag for simplicity within component if next/image config is tricky, but preferably Next Image */}
+            <img src="/logo.png" alt="The Night Agent" className="w-full h-full object-contain drop-shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+          </div>
+          <div className="flex flex-col justify-center">
+            <span className="uppercase tracking-widest text-lg font-extrabold text-gray-100 leading-none mb-1 shadow-black drop-shadow-md">The Night Agent</span>
+            <span className="text-[10px] text-emerald-500 animate-pulse font-mono tracking-wider">● SYSTEM ONLINE</span>
+          </div>
         </header>
         <div className="flex-1 overflow-y-auto">
 
@@ -111,9 +139,24 @@ export default function Dashboard() {
       {/* Main Content: Hidden on mobile unless viewing details */}
       <main className={`
         ${selectedAnomaly ? 'flex' : 'hidden md:flex'} 
-        flex-1 flex-col bg-neutral-900 relative
+        flex-1 flex-col bg-neutral-900 relative min-w-0
       `}>
-        <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent"></div>
+        {/* Top App Bar */}
+        <header className="h-16 border-b border-white/5 bg-[#1A1A1A] flex justify-between items-center px-6">
+          <div className="flex items-center gap-4">
+            <span className="text-gray-500 text-xs tracking-widest uppercase font-bold">Operation Center</span>
+          </div>
+          <div className="flex items-center gap-4">
+            <button className="text-gray-500 hover:text-white transition-colors">
+              <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" /></svg>
+            </button>
+            <div className="w-8 h-8 rounded-full bg-emerald-600/20 border border-emerald-500/30 flex items-center justify-center text-emerald-500 text-xs font-bold">
+              JD
+            </div>
+          </div>
+        </header>
+
+        <div className="absolute inset-x-0 top-16 h-px bg-gradient-to-r from-transparent via-emerald-500/20 to-transparent"></div>
         {selectedAnomaly ? (
           <>
             <div className="flex-1 p-4 md:p-8 overflow-y-auto space-y-8 md:space-y-12">
@@ -142,7 +185,7 @@ export default function Dashboard() {
                   )}
 
                   <h1 className="text-xl font-bold text-gray-100 mb-2">{selectedAnomaly.message}</h1>
-                  <div className="bg-black/40 p-4 rounded border border-white/5 text-xs text-gray-400 font-mono whitespace-pre-wrap leading-relaxed shadow-inner mb-4">
+                  <div className="bg-black/40 p-4 rounded border border-white/5 text-xs text-gray-400 font-mono whitespace-pre-wrap break-all leading-relaxed shadow-inner mb-4">
                     {selectedAnomaly.logs && selectedAnomaly.logs.length > 0 ? selectedAnomaly.logs.join('\n') : selectedAnomaly.context}
                   </div>
                 </div>
@@ -150,7 +193,7 @@ export default function Dashboard() {
 
               {/* STAGE 2: PROPOSED FIX */}
               <section className="animate-in fade-in slide-in-from-bottom-2 duration-500 delay-200">
-                <AgentHeader name="PROPOSED FIX" status={selectedAnomaly.status === 'SANDBOX_READY' || selectedAnomaly.status === 'RESOLVED' ? 'COMPLETE' : 'REVIEW'} />
+                <AgentHeader name="PROPOSED FIX" status={selectedAnomaly.status === 'SANDBOX_READY' || selectedAnomaly.status === 'applied_sandbox' || selectedAnomaly.status === 'RESOLVED' ? 'COMPLETE' : 'REVIEW'} />
                 <div className="pl-4 border-l border-white/5">
 
                   {/* Detailed Reasoning Block */}
@@ -158,7 +201,7 @@ export default function Dashboard() {
                     <h3 className="text-[10px] uppercase tracking-widest text-emerald-600 mb-2 flex items-center gap-2">
                       <span className="w-2 h-px bg-emerald-800"></span> Reasoning
                     </h3>
-                    <div className="text-xs text-gray-300 leading-relaxed font-sans bg-emerald-900/5 p-3 rounded border border-emerald-500/10">
+                    <div className="text-xs text-gray-300 leading-relaxed font-sans bg-emerald-900/5 p-3 rounded border border-emerald-500/10 break-words">
                       {selectedAnomaly.root_cause_analysis ? (
                         <>
                           <div className="font-bold mb-1">Root Cause & Suggested Fix:</div>
@@ -170,9 +213,9 @@ export default function Dashboard() {
                     </div>
                   </div>
 
-                  {selectedAnomaly.status === 'SANDBOX_READY' || selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? (
+                  {selectedAnomaly.status === 'SANDBOX_READY' || selectedAnomaly.status === 'applied_sandbox' || selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? (
                     <div className="p-4 border border-emerald-500/20 bg-emerald-500/5 rounded text-xs text-emerald-400 px-4 py-2 opacity-60">
-                      ✓ Fix Proposal Approved
+                      ✓ Fix Proposal Approved &amp; Applied
                     </div>
                   ) : (
                     <>
@@ -221,22 +264,44 @@ export default function Dashboard() {
                 </div>
               </section>
 
-              {/* STAGE 3: SANDBOX VERIFICATION */}
-              {(selectedAnomaly.status === 'SANDBOX_READY' || selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged') && (
+              {/* STAGE 3: SANDBOX VERIFICATION / CODE REVIEW */}
+              {(selectedAnomaly.status === 'SANDBOX_READY' || selectedAnomaly.status === 'applied_sandbox' || selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged') && (
                 <section className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                  <AgentHeader name="SANDBOX VERIFICATION" status={selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? 'MERGED' : 'ACTION REQUIRED'} />
+                  <AgentHeader name="CODE REVIEW" status={selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? 'MERGED' : 'ACTION REQUIRED'} />
                   <div className="pl-4 border-l border-white/5">
+                    
+                    {/* Applied Fix Diff Viewer */}
+                    <div className="bg-[#0D1117] border border-emerald-500/20 rounded-lg overflow-hidden text-sm font-mono shadow-2xl mb-6">
+                      <div className="border-b border-white/5 px-4 py-3 bg-emerald-500/10 flex justify-between items-center">
+                        <div className="flex items-center gap-3">
+                          <div className="w-2 h-2 bg-emerald-500 rounded-full animate-pulse"></div>
+                          <span className="text-xs text-emerald-400 font-bold uppercase tracking-wider">Applied Changes</span>
+                        </div>
+                        <span className="text-[10px] text-gray-500 font-mono">Branch: <span className="text-emerald-400">{selectedAnomaly.branch || 'generating...'}</span></span>
+                      </div>
+                      <div className="p-0 text-xs text-gray-400 overflow-x-auto max-h-[500px] overflow-y-auto">
+                        {sandboxDiffHtml ? (
+                          <div dangerouslySetInnerHTML={{ __html: sandboxDiffHtml }} className="diff-view-container" />
+                        ) : (
+                          <div className="p-8 text-center opacity-50">
+                            {derived.sandboxDiff ? 'Loading Diff...' : 'Fetching applied changes from repository...'}
+                          </div>
+                        )}
+                      </div>
+                    </div>
+
                     <div className="bg-[#0D1117] border border-amber-500/20 rounded-lg p-6 shadow-2xl relative">
                       {selectedAnomaly.status !== 'RESOLVED' && selectedAnomaly.status !== 'merged' && (
                         <div className="absolute top-0 left-0 w-1 h-full bg-amber-500/50"></div>
                       )}
                       <h4 className={selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? "text-gray-500 font-bold mb-2" : "text-amber-500 font-bold mb-2"}>
-                        {selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? 'Validation Complete' : 'Sandbox Verification'}
+                        {selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' ? 'Merge Complete' : 'Ready for Merge'}
                       </h4>
-                      <p className="text-xs text-gray-400 mb-4">Fixes applied to validation branch. Review changes or request adjustments.</p>
-                      <div className="bg-black/50 p-3 rounded font-mono text-xs text-gray-300 border border-white/5 mb-6 flex justify-between items-center">
-                        <span>Branch: <span className="text-emerald-400">{selectedAnomaly.branch || 'generating...'}</span></span>
-                      </div>
+                      <p className="text-xs text-gray-400 mb-4">
+                        {selectedAnomaly.status === 'RESOLVED' || selectedAnomaly.status === 'merged' 
+                          ? 'Changes have been successfully merged to the target branch.' 
+                          : 'Review the applied changes above. Approve to merge or request adjustments.'}
+                      </p>
 
                       {selectedAnomaly.status !== 'RESOLVED' && selectedAnomaly.status !== 'merged' && (
                         <div className="mb-6 flex justify-end">
@@ -265,7 +330,7 @@ export default function Dashboard() {
                         </div>
                       )}
 
-                      <div className="flex items-end gap-4 border-t border-white/5 pt-6">
+                      <div className="flex flex-col sm:flex-row sm:items-end gap-4 border-t border-white/5 pt-6">
                         {selectedAnomaly.status !== 'RESOLVED' && selectedAnomaly.status !== 'merged' ? (
                           <>
                             <div className="flex-1 relative group">
@@ -332,7 +397,8 @@ export default function Dashboard() {
                               }}
                               className="px-6 py-2 bg-emerald-600 text-white rounded text-xs font-bold hover:bg-emerald-500 shadow-[0_0_20px_rgba(16,185,129,0.3)] transition-all flex items-center gap-2 h-[38px]"
                             >
-                              <span>CONFIRM MERGE</span>
+                              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12"/></svg>
+                              <span>MERGE & PUSH</span>
                             </button>
                           </>
                         ) : (
@@ -349,20 +415,18 @@ export default function Dashboard() {
             </div>
 
             {/* Footer Actions */}
-            <footer className="p-6 border-t border-white/5 bg-black/20 flex justify-end gap-4 items-center">
-              <div className="mr-auto text-xs text-gray-600">
-                Workflow: <span className="text-gray-400">Agent-User-Agent-User</span>
-              </div>
-              {selectedAnomaly.status !== 'SANDBOX_READY' && ((selectedAnomaly.status !== 'RESOLVED' && selectedAnomaly.status !== 'merged')) && (
+            <footer className="p-6 border-t border-white/5 bg-black/20 flex flex-wrap justify-end gap-3 sm:gap-4 items-center">
+              {/* REMOVED Workflow TEXT */}
+              {selectedAnomaly.status !== 'SANDBOX_READY' && selectedAnomaly.status !== 'applied_sandbox' && selectedAnomaly.status !== 'RESOLVED' && selectedAnomaly.status !== 'merged' && (
                 <>
-                  <button onClick={actions.rejectFix} className="px-6 py-2.5 border border-white/10 rounded text-xs font-medium text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors tracking-wide">
+                  <button onClick={actions.rejectFix} className="w-full sm:w-auto px-6 py-2.5 border border-white/10 rounded text-xs font-medium text-gray-400 hover:bg-white/5 hover:text-gray-200 transition-colors tracking-wide text-center">
                     REJECT
                   </button>
                   <button
                     onClick={actions.approveToSandbox}
-                    className="px-6 py-2.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all tracking-wide flex items-center gap-2"
+                    className="w-full sm:w-auto px-6 py-2.5 bg-blue-600 text-white rounded text-xs font-bold hover:bg-blue-500 shadow-[0_0_20px_rgba(37,99,235,0.3)] transition-all tracking-wide flex items-center justify-center gap-2 text-center"
                   >
-                    <span>APPROVE TO SANDBOX</span>
+                    <span>APPROVE FIX</span>
                   </button>
                 </>
               )}

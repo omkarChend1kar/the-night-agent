@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, NotFoundException } from '@nestjs/common';
 import { AnomalyService } from '../services/anomaly.service';
 
 @Controller('api/internal')
@@ -8,6 +8,21 @@ export class InternalController {
     @Get('anomalies/pending')
     async getPendingAnomalies() {
         return this.anomalyService.getPendingAnomalies();
+    }
+
+    @Get('anomalies/:id')
+    async getAnomaly(@Param('id') id: string) {
+        const anomaly = await this.anomalyService.getAnomaly(id);
+        if (!anomaly) throw new NotFoundException('Anomaly not found');
+        return anomaly;
+    }
+
+    @Get('fix/:id')
+    async getFix(@Param('id') id: string) {
+        // Use async version to recover fix with full data from DB if needed
+        const fix = await this.anomalyService.getFixAsync(id);
+        if (!fix) throw new NotFoundException('Fix not found');
+        return fix;
     }
 
     @Post('anomalies/review')

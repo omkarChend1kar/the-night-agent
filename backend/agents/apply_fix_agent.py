@@ -12,29 +12,122 @@ class ApplyFixAgent(BedrockAgent):
     def run(self, fix_proposal_id, repo_path, branch_name):
         self.logger.info(f"Applying fix {fix_proposal_id} to {repo_path} on branch {branch_name}")
         
-        # 1. Checkout Branch (Mocking Git Ops here, but could besubprocess git command)
-        # subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_path)
-        
-        # 2. Use Cline to apply changes
-        # Construct a task prompt for Cline
-        prompt = f"Review the fix proposal {fix_proposal_id} and apply the changes to the codebase. The goal is to fix the reported anomaly."
-        
-        # Command to run Cline in non-interactive mode (yolo) if supported or just task mode
-        # Assuming `cline task "<prompt>" --yolo` works based on help
-        cmd = ["cline", "task", prompt, "--yolo", "--cwd", repo_path]
-        
+        # 1. Fetch Patch
         try:
-            self.logger.info(f"Running Cline: {' '.join(cmd)}")
-            result = subprocess.run(cmd, capture_output=True, text=True)
-            
-            if result.returncode == 0:
-                self.logger.info("Cline applied fix successfully.")
-                self.logger.info(result.stdout)
-            else:
-                self.logger.error(f"Cline failed: {result.stderr}")
-                
+             res = requests.get(f"{self.api_url}/fix/{fix_proposal_id}")
+             res.raise_for_status()
+             fix_data = res.json()
+             patch_content = fix_data.get('diff')
+             if not patch_content:
+                 self.logger.error("No patch content found")
+                 return
         except Exception as e:
-            self.logger.error(f"Failed to execute Cline: {e}")
+            self.logger.error(f"Failed to fetch fix details: {e}")
+            return
+
+        patch_file = os.path.join(repo_path, "temp_apply.patch")
+        with open(patch_file, "w") as f:
+            f.write(patch_content)
+            
+        try:
+            # 2. Checkout Base Branch (main or master) and Pull
+            base_branch = "main"
+            # Check if master exists and main doesn't, or just try checkout
+            # Simple heuristic: try main, if fails try master
+            try:
+                subprocess.run(["git", "checkout", "main"], cwd=repo_path, check=True, capture_output=True)
+            except subprocess.CalledProcessError:
+                self.logger.info("Checkout main failed, trying master...")
+                base_branch = "master"
+                subprocess.run(["git", "checkout", "master"], cwd=repo_path, check=True)
+            
+            self.logger.info(f"Pulling latest {base_branch}...")
+            subprocess.run(["git", "pull", "origin", base_branch], cwd=repo_path, check=True)
+
+            # 3. Create Sandbox Branch
+            self.logger.info(f"Creating sandbox branch {branch_name}...")
+            subprocess.run(["git", "checkout", "-b", branch_name], cwd=repo_path, check=False) # check=False in case it exists
+            subprocess.run(["git", "checkout", branch_name], cwd=repo_path, check=True) # Ensure on branch
+            
+            # 4. Try Native Git Apply
+            self.logger.info("Attempting native git apply...")
+            subprocess.run(["git", "apply", "temp_apply.patch"], cwd=repo_path, check=True, capture_output=True)
+            self.logger.info("Native git apply succeeded.")
+            
+        except subprocess.CalledProcessError as e:
+            self.logger.warning(f"Native git apply failed: {e.stderr.decode() if e.stderr else str(e)}")
+            self.logger.info("Attempting Bedrock Conflict Resolution...")
+            self.resolve_conflict_and_apply(repo_path, patch_content)
+
+        finally:
+             if os.path.exists(patch_file):
+                os.remove(patch_file)
+        
+        # 4. Commit and Push (If changes exist)
+        try:
+            status = subprocess.run(["git", "status", "--porcelain"], cwd=repo_path, capture_output=True, text=True)
+            if status.stdout.strip():
+                subprocess.run(["git", "add", "."], cwd=repo_path, check=True)
+                subprocess.run(["git", "commit", "-m", f"fix: applied automated proposal {fix_proposal_id}"], cwd=repo_path, check=True)
+                self.logger.info("Fix committed successfully.")
+                # subprocess.run(["git", "push", "origin", branch_name], cwd=repo_path, check=True) # Optional push
+            else:
+                self.logger.info("No changes to commit (Clean working tree).")
+        except subprocess.CalledProcessError as e:
+             self.logger.error(f"Commit/Push failed: {e}")
+
+    def resolve_conflict_and_apply(self, repo_path, patch_content):
+        # 1. Parse filename from patch
+        # Simple parser for '--- a/path\n+++ b/path'
+        import re
+        match = re.search(r"^\+\+\+ b/(.+)$", patch_content, re.MULTILINE)
+        if not match:
+            self.logger.error("Could not parse filename from patch.")
+            return
+
+        target_file_rel = match.group(1).strip()
+        target_file_abs = os.path.join(repo_path, target_file_rel)
+        
+        if not os.path.exists(target_file_abs):
+             self.logger.error(f"Target file {target_file_abs} does not exist.")
+             return
+
+        with open(target_file_abs, 'r') as f:
+            file_content = f.read()
+
+        # 2. Ask Bedrock
+        prompt = f"""
+You are an expert Git Merge Resolver.
+I have a file and a patch that failed to apply due to conflicts (or context mismatch).
+Please apply the changes in the submitted patch to the file content intelligently.
+Output ONLY the full new content of the file. Do not wrap in markdown blocks if possible, or use ```code``` blocks.
+
+FILE PATH: {target_file_rel}
+
+FILE CONTENT:
+{file_content}
+
+PATCH:
+{patch_content}
+        """
+        
+        self.logger.info(f"Asking Bedrock to merge patch for {target_file_rel}...")
+        new_content = self.invoke(prompt, system_prompt="You are a code merging engine. Output only the merged code.")
+        
+        if new_content:
+             # Strip loose markdown code blocks if Bedrock adds them
+             clean_content = new_content.strip()
+             if clean_content.startswith("```"):
+                 clean_content = clean_content.split("\n", 1)[1]
+             if clean_content.endswith("```"):
+                 clean_content = clean_content.rsplit("\n", 1)[0]
+             
+             # Write Back
+             with open(target_file_abs, 'w') as f:
+                 f.write(clean_content)
+             self.logger.info(f"Bedrock applied patch to {target_file_rel} successfully.")
+        else:
+             self.logger.error("Bedrock returned no content.")
 
 if __name__ == "__main__":
     if len(sys.argv) < 3:

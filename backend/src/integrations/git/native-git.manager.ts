@@ -132,11 +132,34 @@ export class NativeGitManager implements GitManager {
     async getBranches(repoPath: string): Promise<string[]> {
         try {
             const git = simpleGit(repoPath);
-            // await git.fetch('origin'); // Ensure remote info is up to date
-            const branchSummary = await git.branchLocal();
-            // Also consider remote branches? For merge target usually local or origin/main.
-            // Let's return local branches + usually 'main'/'master' if not present locally but standard.
-            return branchSummary.all;
+            
+            // Fetch to ensure we have latest remote info
+            await git.fetch('origin').catch(() => {});
+            
+            // Get both local and remote branches
+            const branchSummary = await git.branch(['-a']);
+            
+            // Process branches to get clean names
+            const branches = new Set<string>();
+            
+            for (const branch of branchSummary.all) {
+                // Skip HEAD pointer
+                if (branch.includes('HEAD')) continue;
+                
+                // For remote branches like "remotes/origin/main", extract just "main"
+                if (branch.startsWith('remotes/origin/')) {
+                    branches.add(branch.replace('remotes/origin/', ''));
+                } else {
+                    branches.add(branch);
+                }
+            }
+            
+            // Ensure main/master is always included if not present
+            if (!branches.has('main') && !branches.has('master')) {
+                branches.add('main');
+            }
+            
+            return Array.from(branches).sort();
         } catch (e: any) {
             console.warn(`[Git] Failed to get branches: ${e.message}`);
             return ['main']; // Fallback

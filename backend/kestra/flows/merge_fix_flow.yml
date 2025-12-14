@@ -7,7 +7,7 @@ inputs:
     required: true
   - name: repoPath
     type: STRING
-    defaults: "/Users/apple/Development/projects/the-night-agent"
+    required: true
   - name: branch
     type: STRING
     required: true

@@ -41,7 +41,7 @@ tasks:
       print("✅ Analysis Complete & Saved.")
       
       # --- STEP 2: PROPOSER ---
-      print("\n🛠️ Running Propose Fix Agent (Cline)...")
+      print("\n🛠️ Running Propose Fix Agent (Bedrock)...")
       
       try:
           ProposeFixAgent().run(anomaly_id)

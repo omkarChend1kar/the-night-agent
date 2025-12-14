@@ -42,9 +42,9 @@ class AnalystAgent(BedrockAgent):
         
         OUTPUT FORMAT (JSON ONLY):
         {{
-            "root_cause": "Detailed technical explanation of the bug. Be specific (e.g. 'Memory leak in loop', 'Null pointer in user handler').",
+            "root_cause": "Detailed technical explanation. Single paragraph.",
             "relevant_files": ["src/service/foo.ts", "src/api/bar.ts"],
-            "suggested_fix": "Step-by-step description of how to fix the code."
+            "suggested_fix": "Step-by-step description. Use ; to separate steps. DO NOT use newlines inside strings."
         }}
         """
         
@@ -58,6 +58,9 @@ class AnalystAgent(BedrockAgent):
             elif "```" in response_text:
                  response_text = response_text.split("```")[1].split("```")[0].strip()
 
+            # Attempt to fix newlines that break JSON
+            response_text = response_text.replace('\n', ' ')
+            
             analysis = json.loads(response_text)
             
             # Print for Kestra capture if needed (though we save via API)

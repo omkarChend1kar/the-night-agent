@@ -19,6 +19,8 @@ model User {
   isMfaEnabled Boolean  @default(false)
   repos        Repository[]
   tempSshKey   String?  // Temporary storage for SSH private key during onboarding
+  publicKey    String?  // Public key for the user to add to their git provider
+  sshAlias     String?  // Host alias in ~/.ssh/config (e.g. github.com-{userId})
   createdAt    DateTime @default(now())
 }
 
@@ -43,4 +45,18 @@ model Anomaly {
   repoId    String
   repo      Repository @relation(fields: [repoId], references: [id])
   createdAt DateTime @default(now())
+}
+
+model Sidecar {
+  id          String   @id @default(uuid())
+  name        String?  // Friendly name for the sidecar
+  apiKey      String   @unique // Secret key for sidecar authentication
+  userId      String
+  repoId      String?  // Optional: link to specific repo
+  status      String   @default("pending") // "pending", "active", "inactive"
+  lastSeen    DateTime?
+  logPath     String?  // Configured log path
+  serviceId   String?  // Service identifier
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 }

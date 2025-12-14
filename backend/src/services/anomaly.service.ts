@@ -9,7 +9,8 @@ export class AnomalyService {
 
     constructor(
         private prisma: PrismaService,
-        @Inject('WorkflowEngine') private workflowEngine: any // Inject Engine
+        @Inject('WorkflowEngine') private workflowEngine: any,
+        @Inject('GitManager') private gitManager: any
     ) { }
 
     async addAnomaly(dto: any, repoId: string) {
@@ -141,7 +142,18 @@ export class AnomalyService {
     }
 
     getFix(id: string) {
-        return this.fixes.get(id);
+        // Try cache first, but if diff is empty, try to recover it
+        const cached = this.fixes.get(id);
+        if (cached && cached.diff) {
+            return cached;
+        }
+        // Will be populated by ensureFix if needed
+        return cached;
+    }
+
+    async getFixAsync(id: string) {
+        // Use ensureFix to recover fix with full data from DB if needed
+        return this.ensureFix(id);
     }
 
     getFixByAnomalyId(anomalyId: string) {
@@ -163,6 +175,17 @@ export class AnomalyService {
             const repoName = anomaly.repo?.url.split('/').pop()?.replace('.git', '') || 'unknown-repo';
             const sandboxBranch = `fix/${repoName}/${anomaly.id.substring(0, 8)}`;
 
+            // Get the generated patch from the anomaly's context JSON
+            let patchContent = '';
+            try {
+                // Context is stored as JSON string in the database
+                const contextData = JSON.parse(anomaly.context || '{}');
+                patchContent = contextData?.generated_patch || contextData?.patch || '';
+                console.log(`[Recovery] Extracted patch from context, length: ${patchContent.length}`);
+            } catch (e) {
+                console.error('[Recovery] Failed to parse anomaly context:', e);
+            }
+
             fix = {
                 id: identifier, // Assuming 1:1 for MVP
                 anomalyId: identifier,
@@ -170,11 +193,12 @@ export class AnomalyService {
                     anomaly.status === 'RESOLVED' ? 'merged' : 'pending',
                 summary: 'Reconstructed Fix',
                 explanation: 'Recovered from system state.',
-                diff: '',
+                diff: patchContent,
                 branch: sandboxBranch,
                 confidence: 1.0
             };
             this.fixes.set(identifier, fix as FixProposal);
+            console.log(`[Recovery] Fix reconstructed with patch length: ${patchContent.length}`);
             return fix as FixProposal;
         }
         return undefined;
@@ -185,47 +209,198 @@ export class AnomalyService {
         if (!fix) throw new Error('Fix not found');
 
         const fixId = fix.id;
-        // Fetch Anomaly to get Repo context
         const anomaly = await this.prisma.anomaly.findUnique({
             where: { id: fix.anomalyId },
             include: { repo: true }
         });
-        const repoName = anomaly?.repo?.url.split('/').pop()?.replace('.git', '') || 'unknown-repo';
-        // Ensure branch name is set if not already
+
+        if (!anomaly || !anomaly.repo) throw new Error('Anomaly/Repo not found');
+
+        // Reconstruct local Path for git operations
+        const repoUrl = anomaly.repo.url;
+        let repoPath = '';
+        const path = require('path');
+        const fs = require('fs');
+        
+        try {
+            const parts = repoUrl.split(/[:/]/);
+            const repo = parts.pop()?.replace('.git', '');
+            const owner = parts.pop();
+            if (owner && repo) {
+                const workspaceRoot = process.env.WORKSPACE_ROOT || 'workspace/repos';
+                repoPath = path.isAbsolute(workspaceRoot)
+                    ? path.join(workspaceRoot, owner, repo)
+                    : path.join(process.cwd(), workspaceRoot, owner, repo);
+                
+                console.log(`[AnomalyService] Local repo path: ${repoPath}`);
+            }
+        } catch (e) { 
+            console.error('[AnomalyService] Failed to reconstruct repo path:', e);
+        }
+
         if (!fix.branch) {
+            const repoName = repoUrl.split('/').pop()?.replace('.git', '') || 'repo';
             fix.branch = `fix/${repoName}/${fix.anomalyId.substring(0, 8)}`;
         }
 
-        console.log(`[Mock] Target Repo: ${repoName}`);
-        console.log(`[Mock] Creating branch ${fix.branch} from main...`);
-        console.log(`[Mock] Applying patch to ${fix.branch}...`);
+        console.log(`[AnomalyService] Applying fix ${fixId} to ${repoPath} on branch ${fix.branch}`);
 
-        fix.status = 'applied_sandbox';
-        this.fixes.set(fixId, fix);
+        try {
+            // Apply fix directly using git commands (simpler than Kestra for local dev)
+            const simpleGit = require('simple-git');
+            const git = simpleGit(repoPath);
+            
+            // Ensure we have the patch
+            if (!fix.diff) {
+                throw new Error('No patch content in fix proposal');
+            }
+            
+            // Save patch to temp file
+            const patchFile = path.join(repoPath, '.temp-fix.patch');
+            fs.writeFileSync(patchFile, fix.diff);
+            console.log(`[AnomalyService] Patch saved to ${patchFile}`);
+            
+            try {
+                // Checkout main branch
+                await git.checkout('main').catch(() => git.checkout('master'));
+                await git.pull('origin', 'main').catch(() => git.pull('origin', 'master').catch(() => {}));
+                
+                // Create and checkout fix branch
+                await git.checkoutLocalBranch(fix.branch).catch(() => git.checkout(fix.branch));
+                
+                // Apply the patch (try --3way for better conflict handling)
+                let patchApplied = false;
+                try {
+                    await git.raw(['apply', '--3way', patchFile]);
+                    console.log('[AnomalyService] Patch applied successfully');
+                    patchApplied = true;
+                } catch (applyError: any) {
+                    console.warn('[AnomalyService] Patch apply failed:', applyError.message);
+                }
+                
+                // Cleanup temp file BEFORE staging
+                if (fs.existsSync(patchFile)) {
+                    fs.unlinkSync(patchFile);
+                }
+                
+                // Stage and commit if changes were made
+                const status = await git.status();
+                if (patchApplied && status.files.length > 0) {
+                    await git.add('-A');
+                    await git.commit(`fix: applied automated proposal ${fixId}`);
+                    console.log('[AnomalyService] Changes committed');
+                } else {
+                    console.log('[AnomalyService] No changes to commit (patch may not have applied cleanly)');
+                }
+                
+            } catch (innerError: any) {
+                // Cleanup temp file on error
+                if (fs.existsSync(patchFile)) {
+                    fs.unlinkSync(patchFile);
+                }
+                throw innerError;
+            }
 
-        await this.prisma.anomaly.update({
-            where: { id: fix.anomalyId },
-            data: { status: 'SANDBOX_READY' }
-        });
+            fix.status = 'applied_sandbox';
+            this.fixes.set(fixId, fix);
+            
+            // Update anomaly status
+            await this.prisma.anomaly.update({
+                where: { id: fix.anomalyId },
+                data: { status: 'SANDBOX_READY' }
+            });
 
-        return { sandboxBranch: fix.branch };
+            console.log(`[AnomalyService] Fix ${fixId} applied successfully to branch ${fix.branch}`);
+            return { status: 'sandbox_initiated', sandboxBranch: fix.branch };
+        } catch (e) {
+            console.error('Apply Flow trigger failed:', e);
+            throw e;
+        }
     }
 
     async mergeFix(fixId: string, targetBranch: string) {
         const fix = await this.ensureFix(fixId);
         if (!fix) throw new Error('Fix not found');
 
-        console.log(`[Mock] Merging fix to ${targetBranch}...`);
+        console.log(`[AnomalyService] Merging fix ${fixId} from ${fix.branch} to ${targetBranch}...`);
 
-        fix.status = 'merged';
-        this.fixes.set(fixId, fix);
-
-        await this.prisma.anomaly.update({
+        // Reconstruct Repo Path
+        const anomaly = await this.prisma.anomaly.findUnique({
             where: { id: fix.anomalyId },
-            data: { status: 'RESOLVED' }
+            include: { repo: true }
         });
 
-        return { status: 'merged' };
+        if (!anomaly || !anomaly.repo) {
+            throw new Error('Anomaly or Repo not found for fix');
+        }
+
+        const repoUrl = anomaly.repo.url;
+        let repoPath = '';
+        const path = require('path');
+        
+        try {
+            const parts = repoUrl.split(/[:/]/);
+            const repo = parts.pop()?.replace('.git', '');
+            const owner = parts.pop();
+            if (owner && repo) {
+                const workspaceRoot = process.env.WORKSPACE_ROOT || 'workspace/repos';
+                repoPath = path.isAbsolute(workspaceRoot)
+                    ? path.join(workspaceRoot, owner, repo)
+                    : path.join(process.cwd(), workspaceRoot, owner, repo);
+            }
+        } catch (e) {
+            console.warn('Failed to deduce repo path for merge:', e);
+            throw new Error('Could not determine repository path');
+        }
+
+        if (!repoPath) {
+            throw new Error('Repo path could not be deduced');
+        }
+
+        try {
+            const simpleGit = require('simple-git');
+            const git = simpleGit(repoPath);
+            
+            // Checkout target branch
+            console.log(`[AnomalyService] Checking out ${targetBranch}...`);
+            await git.checkout(targetBranch);
+            
+            // Merge the fix branch
+            console.log(`[AnomalyService] Merging ${fix.branch} into ${targetBranch}...`);
+            await git.merge([fix.branch, '--no-ff', '-m', `Merge fix: ${fixId}`]);
+            
+            console.log(`[AnomalyService] Merge successful!`);
+            
+            // Push the merged changes to remote
+            console.log(`[AnomalyService] Pushing to origin/${targetBranch}...`);
+            await git.push('origin', targetBranch);
+            console.log(`[AnomalyService] Push successful!`);
+            
+            // Update fix status
+            fix.status = 'merged';
+            this.fixes.set(fixId, fix);
+            
+            // Update anomaly status
+            await this.prisma.anomaly.update({
+                where: { id: fix.anomalyId },
+                data: { status: 'RESOLVED' }
+            });
+            
+            // Delete the fix branch (local and remote)
+            try {
+                await git.deleteLocalBranch(fix.branch);
+                console.log(`[AnomalyService] Deleted local fix branch ${fix.branch}`);
+                // Also delete remote fix branch if it exists
+                await git.push('origin', `:${fix.branch}`).catch(() => {});
+            } catch (e) {
+                console.warn(`[AnomalyService] Could not delete fix branch: ${e}`);
+            }
+            
+            return { status: 'merged_and_pushed', targetBranch };
+        } catch (e: any) {
+            console.error('Merge failed:', e);
+            throw new Error(`Merge failed: ${e.message}`);
+        }
     }
 
     async refineFix(fixId: string, instruction: string) {
@@ -265,35 +440,88 @@ export class AnomalyService {
         const fix = await this.ensureFix(fixId);
         if (!fix) return null;
 
-        try {
-            // Placeholder: throw to force mock diff generation
-            throw new Error('Repo not active');
-        } catch (e) {
-            console.log(`[Mock] Generating diff for ${fix.branch}`);
-            return `diff --git a/src/core/vr-trainer.service.ts b/src/core/vr-trainer.service.ts
-index 83a9d21..b9fc4a2 100644
---- a/src/core/vr-trainer.service.ts
-+++ b/src/core/vr-trainer.service.ts
-@@ -45,7 +45,9 @@ export class VRTrainerService {
-   async processSession(sessionId: string) {
--    const resource = await this.allocateResource(sessionId);
--    this.activeSessions.push(resource);
-+    let resource;
-+    try {
-+      resource = await this.allocateResource(sessionId);
-+      this.activeSessions.push(resource);
-+    } finally {
-+      if (resource) await resource.release();
-+    }
-   }
- }`;
+        // Try to get structure from real git repo first
+        const anomaly = await this.prisma.anomaly.findUnique({
+            where: { id: fix.anomalyId },
+            include: { repo: true }
+        });
+
+        if (anomaly && anomaly.repo) {
+            let repoPath = '';
+            try {
+                const parts = anomaly.repo.url.split(/[:/]/);
+                const repo = parts.pop()?.replace('.git', '');
+                const owner = parts.pop();
+                if (owner && repo) {
+                    // Directory structure is: workspace/repos/{owner}/{repo}
+                    const workspaceRoot = process.env.WORKSPACE_ROOT || 'workspace/repos';
+                    const path = require('path');
+                    repoPath = path.isAbsolute(workspaceRoot)
+                        ? path.join(workspaceRoot, owner, repo)
+                        : path.join(process.cwd(), workspaceRoot, owner, repo);
+                }
+            } catch (e) { }
+
+            if (repoPath) {
+                try {
+                    // Ensure connection/fetch first? GitManager usually handles local opts.
+                    // Assuming 'main' exists.
+                    const diff = await this.gitManager.getDiff(repoPath, 'main', fix.branch);
+                    if (diff) return diff;
+                } catch (e) {
+                    console.warn('Failed to get real git diff, falling back to stored patch', e);
+                }
+            }
         }
+
+        // Fallback: Return the generated patch from fix proposal
+        return fix.diff || '';
     }
 
     async getBranches(fixId: string) {
         const fix = await this.ensureFix(fixId);
-        // We might use fix context to get specific branches in future
-        return ['main', 'develop', 'staging', 'feature/new-ui'];
+        if (!fix) return ['main'];
+        
+        // Get the repo path for this fix
+        const anomaly = await this.prisma.anomaly.findUnique({
+            where: { id: fix.anomalyId },
+            include: { repo: true }
+        });
+        
+        if (!anomaly || !anomaly.repo) {
+            return ['main'];
+        }
+        
+        // Reconstruct repo path
+        const repoUrl = anomaly.repo.url;
+        let repoPath = '';
+        try {
+            const parts = repoUrl.split(/[:/]/);
+            const repo = parts.pop()?.replace('.git', '');
+            const owner = parts.pop();
+            if (owner && repo) {
+                const path = require('path');
+                const workspaceRoot = process.env.WORKSPACE_ROOT || 'workspace/repos';
+                repoPath = path.isAbsolute(workspaceRoot)
+                    ? path.join(workspaceRoot, owner, repo)
+                    : path.join(process.cwd(), workspaceRoot, owner, repo);
+            }
+        } catch (e) {
+            console.warn('[AnomalyService] Failed to reconstruct repo path for branches:', e);
+            return ['main'];
+        }
+        
+        if (!repoPath) return ['main'];
+        
+        // Get real branches from the repo
+        try {
+            const branches = await this.gitManager.getBranches(repoPath);
+            console.log(`[AnomalyService] Found branches: ${branches.join(', ')}`);
+            return branches;
+        } catch (e) {
+            console.warn('[AnomalyService] Failed to get branches:', e);
+            return ['main'];
+        }
     }
     async getPendingAnomalies() {
         // Fetch PENDING anomalies that haven't been reviewed yet

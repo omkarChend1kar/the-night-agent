@@ -50,3 +50,250 @@
     @apply block text-xs font-medium text-gray-500 mb-1.5 uppercase tracking-wider;
   }
 }
+
+/* --- diff2html VSCode Dark Modern Theme Overrides --- */
+
+/* 1. Main Wrapper & Fonts */
+.d2h-wrapper {
+  color: #CCCCCC;
+  /* VSCode Default Light Text */
+  font-family: var(--font-mono) !important;
+  font-size: 13px !important;
+  /* VSCode default size */
+}
+
+/* 2. File Header (Minimalist) */
+.d2h-file-header {
+  background-color: #1E1E1E !important;
+  /* VSCode Editor Background */
+  border-bottom: 1px solid #30363D !important;
+  padding: 8px 16px !important;
+}
+
+.d2h-file-name {
+  color: #9CDCFE !important;
+  /* VSCode Blue for filenames */
+  font-family: var(--font-mono);
+  font-size: 13px;
+  font-weight: 500;
+}
+
+.d2h-file-stats {
+  display: none !important;
+  /* Hide stats for cleaner look */
+}
+
+/* 3. Diff Container Backgrounds */
+/* 3. Diff Container Backgrounds - STRICT CONTAINMENT */
+.d2h-file-wrapper {
+  background-color: #1E1E1E !important;
+  border: none !important;
+  overflow: hidden !important;
+  /* Fix for leaking line numbers */
+  position: relative !important;
+  border-radius: 8px;
+}
+
+.d2h-diff-table,
+.d2h-code-wrapper {
+  background-color: #1E1E1E !important;
+  border: none !important;
+}
+
+/* 4. Gutter (Line Numbers) - STRICT */
+.d2h-code-linenumber,
+.d2h-code-side-linenumber,
+.d2h-code-linenumber * {
+  background-color: transparent !important;
+  /* Inherit from row/container */
+  color: #858585 !important;
+  /* VSCode Line Number Color */
+  border-right: 1px solid #30363D !important;
+  /* Subtle separator */
+  border-left: none !important;
+  width: 50px !important;
+  text-align: right !important;
+  padding-right: 15px !important;
+  cursor: default;
+  position: static !important;
+  /* Prevent sticky/fixed behavior */
+  z-index: 1;
+}
+
+/* Ensure the parent TD/TR also has the dark bg if not overridden */
+.d2h-diff-tbody tr td.d2h-code-linenumber,
+.d2h-diff-tbody tr td.d2h-code-side-linenumber {
+  background-color: #1E1E1E !important;
+}
+
+/* Fix for specific Diff2Html quirk where empty line numbers are white */
+.d2h-code-linenumber.d2h-emptyplaceholder,
+.d2h-code-side-linenumber.d2h-emptyplaceholder,
+.d2h-code-side-emptyplaceholder {
+  background-color: transparent !important;
+  border: none !important;
+}
+
+/* 5. Code Lines text */
+.d2h-code-line {
+  padding: 0 16px !important;
+  color: #D4D4D4;
+  /* VSCode Default Code Color */
+}
+
+.d2h-code-line-ctn {
+  font-family: var(--font-mono);
+  font-size: 13px;
+  line-height: 20px;
+  /* VSCode Comfortable Line Height */
+}
+
+/* 6. Deletions (Red) - Exact VSCode Colors */
+.d2h-del {
+  background-color: rgba(255, 0, 0, 0.2) !important;
+  /* Slight red tint for whole line */
+  border-color: transparent !important;
+  color: rgba(255, 255, 255, 0.6) !important;
+  /* Dimmed text for deletions */
+}
+
+.d2h-del .d2h-code-line-ctn {
+  background-color: transparent !important;
+}
+
+/* Highlight deeper changes within the line */
+.d2h-del .d2h-code-line-ctn del,
+.d2h-del .d2h-change {
+  background-color: rgba(255, 0, 0, 0.4) !important;
+  /* Darker red for char changes */
+  color: inherit !important;
+  text-decoration: none !important;
+  border-radius: 2px;
+}
+
+/* 7. Insertions (Green) - Exact VSCode Colors */
+.d2h-ins {
+  background-color: rgba(46, 160, 67, 0.2) !important;
+  /* Slight green tint */
+  border-color: transparent !important;
+  color: inherit !important;
+}
+
+.d2h-ins .d2h-code-line-ctn {
+  background-color: transparent !important;
+}
+
+/* Highlight deeper changes within the line */
+.d2h-ins .d2h-code-line-ctn ins,
+.d2h-ins .d2h-change {
+  background-color: rgba(46, 160, 67, 0.4) !important;
+  /* Darker green for char changes */
+  color: inherit !important;
+  text-decoration: none !important;
+  border-radius: 2px;
+}
+
+/* 8. Info / Context Lines (Hunks) */
+.d2h-info {
+  background-color: #1E1E1E !important;
+  color: #858585 !important;
+  border-color: #30363D !important;
+  font-style: italic;
+}
+
+/* 9. Empty Placeholders - Context Aware (VSCode Style) */
+.d2h-emptyplaceholder,
+.d2h-code-side-emptyplaceholder,
+.d2h-code-line.d2h-cntx {
+  background-color: #1E1E1E !important;
+  /* Default dark */
+  border-color: transparent !important;
+  color: #1E1E1E !important;
+}
+
+/* If row has DELETION (Left), make corresponding empty cell (Right) Red-ish */
+.d2h-diff-tbody tr:has(.d2h-del) td.d2h-emptyplaceholder,
+.d2h-diff-tbody tr:has(.d2h-del) td.d2h-code-side-emptyplaceholder,
+.d2h-diff-tbody tr:has(.d2h-del) td.d2h-code-side-linenumber.d2h-emptyplaceholder {
+  background-color: rgba(255, 0, 0, 0.2) !important;
+  /* Match deletion tint */
+  opacity: 0.5;
+}
+
+/* If row has INSERTION (Right), make corresponding empty cell (Left) Green-ish */
+.d2h-diff-tbody tr:has(.d2h-ins) td.d2h-emptyplaceholder,
+.d2h-diff-tbody tr:has(.d2h-ins) td.d2h-code-side-emptyplaceholder,
+.d2h-diff-tbody tr:has(.d2h-ins) td.d2h-code-side-linenumber.d2h-emptyplaceholder {
+  background-color: rgba(46, 160, 67, 0.2) !important;
+  /* Match insertion tint */
+  opacity: 0.5;
+}
+
+/* Ensure empty cells in table don't leak white by default */
+.d2h-diff-tbody tr td.d2h-emptyplaceholder {
+  /* Fallback if :has not triggered */
+  border: none !important;
+}
+
+/* 10. Tags (Avoid weird boxes) */
+.d2h-tag {
+  display: none !important;
+}
+
+.d2h-icon {
+  display: none !important;
+}
+
+/* 11. Side-by-Side adjustments */
+.d2h-file-side-diff {
+  margin-bottom: 0 !important;
+  overflow-x: hidden !important;
+  /* Avoid horiz scroll if possible */
+}
+
+/* Scrollbar styling to match VSCode */
+.d2h-file-wrapper ::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.d2h-file-wrapper ::-webkit-scrollbar-track {
+  background: #1E1E1E;
+}
+
+.d2h-file-wrapper ::-webkit-scrollbar-thumb {
+  background: #424242;
+  border-radius: 5px;
+  border: 2px solid #1E1E1E;
+}
+
+.d2h-file-wrapper ::-webkit-scrollbar-thumb:hover {
+  background: #4F4F4F;
+}
+
+/* Force Hide Next.js Dev Indicators */
+[data-nextjs-toast],
+[data-nextjs-dialog-header],
+div[class*="nextjs-cont"],
+#next-route-announcer {
+  display: none !important;
+  opacity: 0 !important;
+  visibility: hidden !important;
+  pointer-events: none !important;
+}
+
+/* Force Hide Next.js 13/14/15 Dev Tools & Turbopack Badge */
+nextjs-portal,
+#nextjs-dev-tools-overlay,
+[data-nextjs-dev-tools],
+[aria-label="Next.js Dev Tools"],
+.nextjs-toast-errors-parent,
+[data-nextjs-router-indicator] {
+  display: none !important;
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+  z-index: -9999 !important;
+  width: 0 !important;
+  height: 0 !important;
+}

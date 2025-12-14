@@ -24,6 +24,11 @@ export class MockWorkflowEngine implements WorkflowEngine {
     return 'mock-workflow-id-' + Date.now();
   }
 
+  async executeFlow(flowId: string, inputs: Record<string, any>): Promise<string> {
+    console.log(`[MockWorkflow] Executing generic flow ${flowId} with inputs:`, inputs);
+    return 'mock-generic-id-' + Date.now();
+  }
+
   async getStatus(workflowExecutionId: string): Promise<WorkflowStatus> {
     return {
       status: 'completed',

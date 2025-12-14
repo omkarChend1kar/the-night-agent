@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, Param, Inject, UseGuards, Req, NotFoundException } from '@nestjs/common';
+import { Controller, Get, Post, Body, Param, Inject, UseGuards, Req, NotFoundException, HttpException, HttpStatus } from '@nestjs/common';
 import { AnomalyService } from '../services/anomaly.service';
 import { GitManager } from '../integrations/git/git-manager.interface';
 import { AuthGuard } from '@nestjs/passport';
@@ -7,18 +7,19 @@ import { AuthService } from '../auth/auth.service';
 import { PrismaService } from '../prisma.service';
 import { SshConfigService } from '../services/ssh-config.service';
 import { VerificationService } from '../services/verification.service';
+import { GitIdentityService } from '../services/git-identity.service';
 
 @Controller('api')
 export class FrontendController {
     constructor(
         private anomalyService: AnomalyService,
-        // @Inject('CodeExecutor') private codeExecutor: CodeExecutor,
         @Inject('GitManager') private gitManager: any,
-        private encryptService: EncryptionService, // New
-        private authService: AuthService, // New
+        private encryptService: EncryptionService,
+        private authService: AuthService,
         private prisma: PrismaService,
-        private sshConfigService: SshConfigService, // New
-        private verifyService: VerificationService, // New
+        private sshConfigService: SshConfigService,
+        private verifyService: VerificationService,
+        private gitIdentityService: GitIdentityService,
     ) { }
 
     @UseGuards(AuthGuard('jwt'))
@@ -38,69 +39,79 @@ export class FrontendController {
         return { publicKey };
     }
 
-    @UseGuards(AuthGuard('jwt'))
-    @Get('repos')
-    async getRepos(@Req() req: any) {
-        const repos = await this.prisma.repository.findMany({
-            where: { userId: req.user.userId }
-        });
-        return repos;
-    }
-
     @UseGuards(AuthGuard('jwt')) // Protect
     @Post('onboard')
     async onboard(@Req() req: any, @Body() body: { repoUrl: string, protocol: 'https' | 'ssh', username?: string, token?: string }) {
         console.log(`Onboarding ${body.repoUrl} for ${req.user.email} via ${body.protocol}`);
 
-        // 1. Create Repository Record First (to get UUID)
-        const repo = await this.prisma.repository.create({
-            data: {
-                url: body.repoUrl,
-                protocol: body.protocol,
-                userId: req.user.userId
-            }
-        });
-
-        let responseData: any = { status: 'connected', sidecarId: 'sidecar-' + repo.id, repoId: repo.id };
-
-        if (body.protocol === 'ssh') {
-            // 2. SSH Flow: Generate Keypair & Config
-            const keys = await this.encryptService.generateKeyPair(repo.id);
-
-            // 3. Parse Hostname (Simple regex for git@host:path or ssh://git@host/path)
-            // Default to github.com if parsing fails for MVP, but we should try to extract.
-            let hostname = 'github.com';
-            const match = body.repoUrl.match(/@([^:]+):/);
-            if (match) {
-                hostname = match[1];
-            }
-
-            // 4. Update SSH Config
-            const alias = `${repo.id}-git`;
-            this.sshConfigService.addEntry(alias, hostname, keys.privateKeyPath);
-
-            // 5. Update Repo Record
-            await this.prisma.repository.update({
-                where: { id: repo.id },
+        try {
+            // 1. Create Repository Record First (to get UUID)
+            const repo = await this.prisma.repository.create({
                 data: {
-                    sshKeyPath: keys.privateKeyPath,
-                    sshConfigAlias: alias,
-                    publicKey: keys.publicKey
+                    url: body.repoUrl,
+                    protocol: body.protocol,
+                    userId: req.user.userId
                 }
             });
 
-            responseData.publicKey = keys.publicKey;
-            responseData.requiresVerification = true;
-        } else if (body.protocol === 'https' && body.token) {
-            // HTTPS Flow
-            const encryptedCreds = this.encryptService.encrypt(body.token);
-            await this.prisma.repository.update({
-                where: { id: repo.id },
-                data: { encryptedCreds }
-            });
-        }
+            let responseData: any = { status: 'connected', sidecarId: 'sidecar-' + repo.id, repoId: repo.id };
 
-        return responseData;
+            if (body.protocol === 'ssh') {
+                // 2. SSH Flow: Use User Identity + Deduce Provider
+                // Deduce Hostname
+                let hostname = '';
+                const sshMatch = body.repoUrl.match(/@([^:]+):/);
+                if (sshMatch) {
+                    hostname = sshMatch[1];
+                } else {
+                    const httpsMatch = body.repoUrl.match(/https?:\/\/([^/]+)/);
+                    if (httpsMatch) hostname = httpsMatch[1];
+                }
+
+                if (!hostname) {
+                    throw new Error('Could not determine hostname from repository URL. Please verify the URL format.');
+                }
+
+                // Generate/Ensure Config Alias
+                const alias = await this.gitIdentityService.addProviderAlias(req.user.userId, hostname);
+
+                // Get User Public Key to return
+                const user = await this.prisma.user.findUnique({ where: { id: req.user.userId } });
+                if (!user) throw new Error('User not found during onboarding');
+
+                // 5. Update Repo Record
+                await this.prisma.repository.update({
+                    where: { id: repo.id },
+                    data: {
+                        sshConfigAlias: alias,
+                        publicKey: (user as any).publicKey
+                    }
+                });
+
+                responseData.publicKey = (user as any).publicKey;
+                responseData.requiresVerification = true;
+            } else if (body.protocol === 'https' && body.token) {
+                // HTTPS Flow
+                const encryptedCreds = this.encryptService.encrypt(body.token);
+                await this.prisma.repository.update({
+                    where: { id: repo.id },
+                    data: { encryptedCreds }
+                });
+            }
+
+            return responseData;
+        } catch (e) {
+            console.error("Onboarding Error:", e);
+            throw new HttpException(e.message || 'Onboarding Failed', HttpStatus.BAD_REQUEST);
+        }
+    }
+
+    @UseGuards(AuthGuard('jwt'))
+    @Get('repos')
+    async getRepos(@Req() req: any) {
+        return this.prisma.repository.findMany({
+            where: { userId: req.user.userId }
+        });
     }
 
     @Get('anomalies')
@@ -136,7 +147,7 @@ export class FrontendController {
     async applySandbox(@Param('id') id: string) {
         try {
             const result = await this.anomalyService.applyToSandbox(id);
-            return { status: 'sandbox_ready', ...result };
+            return result;
         } catch (e) {
             return { error: e.message };
         }
