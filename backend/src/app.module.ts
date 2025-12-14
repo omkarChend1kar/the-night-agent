@@ -18,6 +18,7 @@ import { AuthModule } from './auth/auth.module';
 import { PrismaService } from './prisma.service';
 import { SshConfigService } from './services/ssh-config.service';
 import { VerificationService } from './services/verification.service';
+import { GitIdentityService } from './services/git-identity.service';
 
 import { InternalController } from './api/internal.controller';
 
@@ -32,6 +33,7 @@ import { InternalController } from './api/internal.controller';
     SidecarService,
     SshConfigService,
     VerificationService,
+    GitIdentityService,
     {
       provide: 'WorkflowEngine',
       useFactory: () => {
