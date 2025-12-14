@@ -1,0 +1,12 @@
+# Kestra Configuration
+# Note: Kestra 0.24+ requires authentication. The 'enabled' flag is ignored.
+# Setting username/password directly is what initializes basic auth.
+# Default credentials: admin@kestra.io / Admin1234 (change in production!)
+kestra:
+  server:
+    basic-auth:
+      username: admin@kestra.io
+      password: Admin1234
+
+  security:
+    enabled: false
