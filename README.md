@@ -442,18 +442,6 @@ KESTRA_PASSWORD="Admin1234"
 
 ---
 
-## Contributing
-
-We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) for details.
-
----
-
-## License
-
-MIT License - see [LICENSE](LICENSE) for details.
-
----
-
 <p align="center">
   <sub>Built with ❤️ for developers who value their sleep</sub>
 </p>
