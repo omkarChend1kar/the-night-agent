@@ -1,22 +1,32 @@
 #!/bin/bash
 
-# Cleanup function to kill Docker kestra when script exits
+# Cleanup function to kill Docker kestra and background processes when script exits
 cleanup() {
     echo ""
     echo "🛑 Shutting down..."
     echo "Stopping Kestra Container..."
     docker rm -f kestra-local >/dev/null 2>&1
+    # Kill all background jobs (Frontend, etc)
+    kill $(jobs -p) 2>/dev/null
     exit
 }
 
 # Trap Ctrl+C (SIGINT) and regular exit
 trap cleanup SIGINT EXIT
 
-echo "🧹 Cleaning up ports 3001 (Backend) and 8080 (Kestra)..."
-lsof -ti:3001 | xargs kill -9 2>/dev/null
+echo "🚀 Starting Full Stack Environment (Frontend + Backend + Kestra)..."
+
+echo "🧹 Cleaning up ports 3000 (Frontend), 3001 (Backend) and 8080 (Kestra)..."
+lsof -ti:3000,3001 | xargs kill -9 2>/dev/null
 # Ensure no lingering Kestra container
 docker rm -f kestra-local >/dev/null 2>&1
 
+# --- Frontend Start (Background) ---
+echo "📦 Starting Frontend (Port 3000)..."
+# We do this in a subshell so we don't change the current directory for the rest of the script
+(cd frontend && npm run dev) &
+
+# --- Kestra Start (Docker) ---
 echo "🚀 Starting Kestra Server (Docker)..."
 
 # Move to backend directory for backend startup later
@@ -35,20 +45,36 @@ fi
 echo "📂 Project Root: $PROJECT_ROOT"
 
 echo "⏳ Checking Docker..."
+
 if ! docker info > /dev/null 2>&1; then
-  echo "❌ Docker is not running. Please start Docker."
-  exit 1
+    echo "⚠️  Docker is NOT running."
+    if [[ "$OSTYPE" == "darwin"* ]]; then
+        echo "🍎 macOS detected. Attempting to start Docker Desktop..."
+        open -a Docker
+    else
+        echo "❌ Cannot auto-start Docker on this OS. Please start Docker manually."
+    fi
 fi
+
+# Wait for Docker to be ready
+MAX_DOCKER_RETRIES=60 # Wait up to 2 minutes
+DOCKER_COUNT=0
+until docker info > /dev/null 2>&1; do
+    echo "   Waiting for Docker to initialize... ($((DOCKER_COUNT * 2))s)"
+    sleep 2
+    DOCKER_COUNT=$((DOCKER_COUNT+1))
+    if [ $DOCKER_COUNT -ge $MAX_DOCKER_RETRIES ]; then
+        echo "❌ Docker did not start within 2 minutes. Please check Docker Desktop."
+        exit 1
+    fi
+done
+echo "✅ Docker is running."
 
 echo "🛑 Cleaning up old Kestra container..."
 docker stop kestra-local >/dev/null 2>&1 || true
 docker rm kestra-local >/dev/null 2>&1 || true
 
 echo "🚀 Starting Kestra (Docker)..."
-# Using absolute paths derived from PROJECT_ROOT for reliability
-# Note: Kestra 0.24+ requires authentication with username/password set directly.
-# The 'enabled' flag is ignored in 0.24+; setting username/password is what matters.
-# You can override these via KESTRA_USERNAME and KESTRA_PASSWORD environment variables.
 KESTRA_USER="${KESTRA_USERNAME:-admin@kestra.io}"
 KESTRA_PASS="${KESTRA_PASSWORD:-Admin1234}"
 
@@ -99,12 +125,11 @@ for flow_file in $FLOW_FILES; do
 done
 echo "✅ Flows Deployed."
 
-echo "🚀 Starting Backend..."
+# --- Backend Start ---
+echo "🚀 Starting Backend (Port 3001)..."
 # Already in backend directory
-# Export Kestra credentials so the backend can authenticate
 export KESTRA_USERNAME="${KESTRA_USERNAME:-admin@kestra.io}"
 export KESTRA_PASSWORD="${KESTRA_PASSWORD:-Admin1234}"
 export USE_KESTRA=true
 export PORT=3001
 npm run start:dev
-

@@ -30,3 +30,9 @@ kill-frontend:
 frontend: kill-frontend
 	@echo "🚀 Starting Frontend..."
 	@cd frontend && npm run dev
+
+# Start both backend and frontend concurrently
+start-all: kill-backend kill-frontend
+	@echo "🚀 Starting Full Stack (Frontend + Backend + Kestra)..."
+	@./scripts/start-all.sh
+
