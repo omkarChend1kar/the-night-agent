@@ -32,7 +32,7 @@ export class EncryptionService implements OnModuleInit {
         if (!fs.existsSync(this.keyPath)) {
             console.log('Generating Global SSH Key...');
             try {
-                await execAsync(`ssh-keygen -t rsa -b 4096 -f "${this.keyPath}" -N "" -C "night-agent-global"`);
+                await execAsync(`ssh-keygen -t ed25519 -f "${this.keyPath}" -N "" -C "night-agent-global"`);
                 console.log('Global SSH Key Generated.');
             } catch (e) {
                 console.error('Failed to generate Global Key', e);
@@ -84,7 +84,7 @@ export class EncryptionService implements OnModuleInit {
         this.logger.log(`Generating Keypair for Repo ${repoId}...`);
 
         try {
-            await execAsync(`ssh-keygen -t rsa -b 4096 -f "${keyPath}" -N "" -C "night-agent-${repoId}"`);
+            await execAsync(`ssh-keygen -t ed25519 -f "${keyPath}" -N "" -C "night-agent-${repoId}"`);
 
             // Secure private key
             fs.chmodSync(keyPath, 0o600);

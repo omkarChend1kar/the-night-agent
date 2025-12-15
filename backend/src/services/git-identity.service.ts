@@ -9,7 +9,7 @@ import { execSync } from 'child_process';
 export class GitIdentityService {
     private readonly logger = new Logger(GitIdentityService.name);
 
-    constructor(private sshConfigService: SshConfigService) {}
+    constructor(private sshConfigService: SshConfigService) { }
 
     /**
      * Ensure SSH identity exists for a user and return key path
@@ -29,11 +29,11 @@ export class GitIdentityService {
         this.logger.log(`Generating SSH key for user ${userId}`);
         try {
             execSync(
-                `ssh-keygen -t rsa -b 4096 -f "${keyPath}" -N "" -C "${email}"`,
+                `ssh-keygen -t ed25519 -f "${keyPath}" -N "" -C "${email}"`,
                 { stdio: 'inherit' }
             );
             fs.chmodSync(keyPath, 0o600);
-            
+
             const publicKey = fs.readFileSync(pubKeyPath, 'utf8').trim();
             this.logger.log(`SSH key generated for user ${userId}`);
             return { keyPath, publicKey };
@@ -48,13 +48,13 @@ export class GitIdentityService {
      */
     async addProviderAlias(userId: string, hostname: string): Promise<string> {
         const alias = `${userId}-${hostname.replace(/\./g, '-')}`;
-        
+
         // Ensure identity exists first
         // Note: We need email, but for now we'll use a default or get from user
         // For simplicity, we'll just ensure the key exists
         const sshDir = path.join(os.homedir(), '.ssh');
         const keyPath = path.join(sshDir, `id_rsa_${userId}`);
-        
+
         // If key doesn't exist, generate it with a default email
         if (!fs.existsSync(keyPath)) {
             await this.ensureIdentity(userId, `${userId}@night-agent.local`);
@@ -62,7 +62,7 @@ export class GitIdentityService {
 
         // Add SSH config entry
         this.sshConfigService.addEntry(alias, hostname, keyPath);
-        
+
         return alias;
     }
 
@@ -72,12 +72,28 @@ export class GitIdentityService {
     async getPublicKey(userId: string): Promise<string | null> {
         const sshDir = path.join(os.homedir(), '.ssh');
         const pubKeyPath = path.join(sshDir, `id_rsa_${userId}.pub`);
-        
+
         if (fs.existsSync(pubKeyPath)) {
             return fs.readFileSync(pubKeyPath, 'utf8').trim();
         }
-        
+
         return null;
+    }
+
+    /**
+     * Regenerate SSH key for a user
+     */
+    async regenerateKey(userId: string, email: string): Promise<{ keyPath: string; publicKey: string }> {
+        const sshDir = path.join(os.homedir(), '.ssh');
+        const keyPath = path.join(sshDir, `id_rsa_${userId}`);
+        const pubKeyPath = `${keyPath}.pub`;
+
+        // Delete existing keys
+        if (fs.existsSync(keyPath)) fs.unlinkSync(keyPath);
+        if (fs.existsSync(pubKeyPath)) fs.unlinkSync(pubKeyPath);
+
+        // Generate new ones
+        return this.ensureIdentity(userId, email);
     }
 }
 

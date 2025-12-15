@@ -1,4 +1,4 @@
-import { Injectable, UnauthorizedException } from '@nestjs/common';
+import { Injectable, UnauthorizedException, ConflictException } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import * as bcrypt from 'bcrypt';
 import * as otplib from 'otplib';
@@ -25,7 +25,7 @@ export class AuthService {
             });
             return { id: user.id, email: user.email, name: user.name };
         } catch (e) {
-            throw new Error('User already exists');
+            throw new ConflictException('User already exists');
         }
     }
 

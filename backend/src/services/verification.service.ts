@@ -87,12 +87,65 @@ export class VerificationService {
             }
         }
 
+        const success = checks.handshake && checks.read;
+
+        if (success) {
+            await this.prisma.repository.update({
+                where: { id: repoId },
+                data: { verified: true }
+            });
+        }
+
         return {
-            success: checks.handshake && checks.read, // Success if at least read is possible. Write is optional/advanced? 
-            // Actually, for "The Night Agent", we need write. But maybe for onboarding, read is minimum?
-            // Let's keep it as read required for basic success, but exposing all checks.
+            success,
             checks,
             logs
         };
+    }
+
+    async cloneRepo(repoId: string): Promise<{ success: boolean; message: string; path: string }> {
+        const repo = await this.prisma.repository.findUnique({ where: { id: repoId } });
+        if (!repo) throw new Error('Repository not found');
+
+        const repoUrl = repo.url;
+        let repoPath = '';
+        const path = require('path');
+        const fs = require('fs');
+
+        try {
+            // Determine Repo Path (Same logic as AnomalyService)
+            const parts = repoUrl.split(/[:/]/);
+            // Handle git@github.com:org/repo.git format
+            const repoName = parts.pop()?.replace('.git', '');
+            const owner = parts.pop();
+
+            if (owner && repoName) {
+                const workspaceRoot = process.env.WORKSPACE_ROOT || 'workspace/repos';
+                repoPath = path.isAbsolute(workspaceRoot)
+                    ? path.join(workspaceRoot, owner, repoName)
+                    : path.join(process.cwd(), workspaceRoot, owner, repoName);
+            } else {
+                throw new Error(`Could not parse owner/repo from ${repoUrl}`);
+            }
+        } catch (e) {
+            this.logger.error('Failed to deduce repo path:', e);
+            throw new Error('Could not determine repository path');
+        }
+
+        if (fs.existsSync(repoPath)) {
+            // Already exists
+            return { success: true, message: 'Repository already exists', path: repoPath };
+        }
+
+        this.logger.log(`Cloning ${repoUrl} to ${repoPath}...`);
+
+        // Ensure parent dir exists
+        if (!fs.existsSync(path.dirname(repoPath))) {
+            fs.mkdirSync(path.dirname(repoPath), { recursive: true });
+        }
+
+        await this.gitManager.cloneRepo(repoUrl, repo.encryptedCreds || '', repoPath);
+
+        return { success: true, message: 'Repository cloned successfully', path: repoPath };
     }
 }

@@ -1,0 +1,138 @@
+{
+  "workflow_trigger_threshold": 40,
+  "scoring_rules": {
+    "base_severity": {
+      "CRITICAL": 100,
+      "FATAL": 100,
+      "ERROR": 80,
+      "WARN": 40,
+      "INFO": 10,
+      "DEBUG": 10
+    },
+    "anomaly_type_bonus": {
+      "Frequency Anomaly": 30,
+      "Latency Anomaly": 30,
+      "Log-Sequence Anomaly": 20,
+      "Novel Log Template": 0,
+      "Severity Mismatch": 0,
+      "Tenant-Localized Anomaly": 0
+    },
+    "user_impact_bonus": 30,
+    "confidence_multiplier": {
+      "high_confidence (>0.9)": 10,
+      "low_confidence (<0.5)": -10
+    }
+  },
+  "noise_filter": {
+    "rule": "Drop Novel Log Template anomalies with INFO or DEBUG severity",
+    "applies_to": ["Novel Log Template", "Novelty Anomaly"]
+  },
+  "example_scores": {
+    "high_priority_examples": [
+      {
+        "description": "ERROR severity Frequency Anomaly",
+        "severity": "ERROR",
+        "anomaly_type": "Frequency Anomaly",
+        "calculation": "80 (ERROR) + 30 (Frequency) = 110",
+        "score": 110,
+        "triggers_workflow": true
+      },
+      {
+        "description": "ERROR severity with user impact",
+        "severity": "ERROR",
+        "anomaly_type": "Novel Log Template",
+        "user_id": "present",
+        "calculation": "80 (ERROR) + 30 (User Impact) = 110",
+        "score": 110,
+        "triggers_workflow": true
+      },
+      {
+        "description": "WARN severity Frequency Anomaly",
+        "severity": "WARN",
+        "anomaly_type": "Frequency Anomaly",
+        "calculation": "40 (WARN) + 30 (Frequency) = 70",
+        "score": 70,
+        "triggers_workflow": true
+      },
+      {
+        "description": "CRITICAL severity any type",
+        "severity": "CRITICAL",
+        "anomaly_type": "any",
+        "calculation": "100 (CRITICAL) = 100",
+        "score": 100,
+        "triggers_workflow": true
+      }
+    ],
+    "low_priority_examples": [
+      {
+        "description": "ERROR severity Novel Log Template (no user impact)",
+        "severity": "ERROR",
+        "anomaly_type": "Novel Log Template",
+        "user_id": "absent",
+        "calculation": "80 (ERROR) + 0 (no type bonus) = 80",
+        "score": 80,
+        "triggers_workflow": true,
+        "note": "Actually triggers, but if severity not detected correctly, could score lower"
+      },
+      {
+        "description": "WARN severity Novel Log Template",
+        "severity": "WARN",
+        "anomaly_type": "Novel Log Template",
+        "calculation": "40 (WARN) + 0 (no type bonus) = 40",
+        "score": 40,
+        "triggers_workflow": true,
+        "note": "Exactly at threshold"
+      },
+      {
+        "description": "ERROR severity Novel Log Template with low confidence",
+        "severity": "ERROR",
+        "anomaly_type": "Novel Log Template",
+        "confidence": 0.4,
+        "calculation": "80 (ERROR) + 0 (type) - 10 (low confidence) = 70",
+        "score": 70,
+        "triggers_workflow": true
+      },
+      {
+        "description": "INFO severity Novel Log Template",
+        "severity": "INFO",
+        "anomaly_type": "Novel Log Template",
+        "calculation": "10 (INFO) + 0 (type) = 10",
+        "score": 10,
+        "triggers_workflow": false,
+        "note": "This is what happened in your case - severity was likely parsed as INFO"
+      }
+    ]
+  },
+  "current_issue": {
+    "detected_anomaly": {
+      "type": "Novel Log Template",
+      "severity_detected": "medium",
+      "score": 10,
+      "why_low_score": "Severity was parsed as 'medium' or 'INFO' instead of 'ERROR', resulting in base score of 10 instead of 80"
+    },
+    "solution": "Improve severity extraction from log lines to correctly identify ERROR severity"
+  },
+  "recommendations": {
+    "increase_detection": [
+      "Improve log parsing to extract severity from log message text (e.g., 'ERROR:', '❌ ERROR')",
+      "Add severity detection from log line patterns",
+      "Consider lowering threshold for ERROR severity anomalies to 30",
+      "Add bonus for Novel Log Template when severity is ERROR or WARN"
+    ],
+    "test_scenarios": [
+      "Generate ERROR severity Novel Log Template (should score 80+)",
+      "Generate WARN severity Frequency Anomaly (should score 70)",
+      "Generate INFO severity Novel Log Template (should score 10, correctly skipped)"
+    ]
+  },
+  "fixes_applied": {
+    "issue": "Sidecar was sending 'high'/'medium' severity instead of standard levels (ERROR/WARN/INFO)",
+    "fixes": [
+      "Updated sidecar/main.py to extract actual severity from log lines (ERROR/WARN/INFO)",
+      "Updated sidecar/detector.py to detect severity from log message text (❌ ERROR, ERROR:, etc.)",
+      "Updated backend anomaly.service.ts to map 'HIGH'->'ERROR', 'MEDIUM'->'WARN', 'LOW'->'INFO'",
+      "Added bonus (+20) for Novel Log Template when severity is ERROR or WARN"
+    ],
+    "expected_improvement": "ERROR severity Novel Log Template should now score 80+20=100 (triggers workflow)"
+  }
+}

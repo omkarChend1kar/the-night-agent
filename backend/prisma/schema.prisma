@@ -32,6 +32,7 @@ model Repository {
   sshKeyPath      String?   // [NEW] Local path to private key
   sshConfigAlias  String?   // [NEW] Host alias in ~/.ssh/config (e.g. repo-uuid-git)
   publicKey       String?   // For SSH
+  verified        Boolean   @default(false) // Track if connection is verified
   userId          String
   user            User      @relation(fields: [userId], references: [id])
   anomalies       Anomaly[]
