@@ -25,7 +25,7 @@ tasks:
       image: alpine/git:latest
       pullPolicy: IF_NOT_PRESENT
       volumes:
-        - /Users/apple/Development/projects/the-night-agent:/workspace
+        - "{{ envs.NIGHT_AGENT_ROOT | default('/app') }}:/workspace"
     env:
       API_URL: "http://host.docker.internal:3001/api/internal"
       FIX_ID: "{{ inputs.fixId }}"
