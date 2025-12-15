@@ -1,4 +1,8 @@
-scikit-learn==1.3.2
-numpy==1.26.2
-requests==2.31.0
-watchdog==3.0.0
+# Night Agent Sidecar - Python dependencies
+# Minimal production-ready requirements
+
+# HTTP client
+requests>=2.31.0
+
+# Retry logic (optional, for future enhancements)
+tenacity>=8.2.0

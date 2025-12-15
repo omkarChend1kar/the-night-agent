@@ -2,22 +2,26 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install build deps if needed (usually simple pip packages don't need much)
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential \
-    && rm -rf /var/lib/apt/lists/*
-
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY . .
 
-# Environment Defaults
+# Environment Defaults (all configurable)
 ENV BACKEND_URL=http://host.docker.internal:3001/api/sidecar
 ENV LOG_PATH=/app/logs/app.log
 ENV SERVICE_ID=python-ml-sidecar
 
-# Make directory for logs
+# Detection tuning
+ENV LEARNING_PERIOD=300
+ENV FREQ_THRESHOLD_ERROR=50
+ENV FREQ_THRESHOLD_FLOOD=200
+ENV LATENCY_THRESHOLD=5.0
+ENV RATE_LIMIT_MAX=20
+ENV HEARTBEAT_INTERVAL=30
+
+# Create logs directory
 RUN mkdir -p /app/logs
 
-CMD ["python", "main.py"]
+# Use exec form for proper signal handling
+CMD ["python", "-u", "main.py"]
