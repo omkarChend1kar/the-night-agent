@@ -1,46 +1,44 @@
 "use client";
-import { useState, useEffect } from 'react';
-import { useRouter } from 'next/navigation';
-import Onboarding from '../components/Onboarding';
-import Dashboard from '../components/Dashboard';
+import { useGlobalState } from '../useGlobalState';
+
+import ConnectRepoPage from '../features/onboarding/presentation/pages/ConnectRepoPage';
+import VerifyRepoPage from '../features/onboarding/presentation/pages/VerifyRepoPage';
+import SidecarSetupPage from '../features/onboarding/presentation/pages/SidecarSetupPage';
+import DashboardPage from '../features/dashboard/presentation/pages/DashboardPage';
 
 export default function Home() {
-  const [isOnboarded, setIsOnboarded] = useState(false);
-  const [loading, setLoading] = useState(true);
-  const router = useRouter();
+  const appState = useGlobalState();
+  console.log('[Router] Current App State:', appState); // Debug Log
 
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    if (!token) {
-      router.push('/login');
-    } else {
-      // Check if user has repo connected
-      import('axios').then(axios => {
-        axios.default.get('http://localhost:3000/api/repos', {
-          headers: { Authorization: `Bearer ${token}` }
-        }).then(res => {
-          if (res.data && res.data.length > 0) {
-            setIsOnboarded(true);
-          }
-          setLoading(false);
-        }).catch(() => {
-          // If error (e.g. 401), redirect to login
-          setLoading(false);
-          router.push('/login');
-        });
-      });
-    }
-  }, []);
+  if (appState === 'LOADING') {
+    return (
+      <div className="min-h-screen bg-[#0D1117] flex items-center justify-center">
+        <div className="flex flex-col items-center gap-4">
+          <div className="w-12 h-12 rounded-full border-2 border-green-500/20 border-t-green-500 animate-spin"></div>
+          <div className="text-green-500 font-mono text-sm tracking-widest animate-pulse">Initializing System...</div>
+        </div>
+      </div>
+    );
+  }
 
-  if (loading) return <div className="h-screen bg-black text-green-500 font-mono flex items-center justify-center">INITIALIZING...</div>;
-
-  return (
-    <main>
-      {isOnboarded ? (
-        <Dashboard />
-      ) : (
-        <Onboarding onComplete={() => setIsOnboarded(true)} />
-      )}
-    </main>
-  );
+  switch (appState) {
+    case 'UNAUTHENTICATED':
+      // Instead of rendering login here, we redirect to explicit /login
+      // This avoids URL confusion.
+      if (typeof window !== 'undefined') {
+        window.location.href = '/login';
+      }
+      return null;
+    case 'ONBOARDING_CONNECT':
+      return <ConnectRepoPage />;
+    case 'ONBOARDING_VERIFY':
+      return <VerifyRepoPage />;
+    case 'ONBOARDING_SIDECAR':
+      return <SidecarSetupPage />;
+    case 'DASHBOARD':
+      return <DashboardPage />;
+    default:
+      // Should not happen if state is exhaustive, but safe fallback
+      return null;
+  }
 }
