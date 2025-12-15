@@ -61,3 +61,16 @@ model Sidecar {
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
+
+model Fix {
+  id          String   @id @default(uuid())
+  anomalyId   String   @unique  // One fix per anomaly
+  diff        String?  // The patch content
+  explanation String?  // LLM explanation of the fix
+  branch      String?  // Git branch name for the fix
+  summary     String?  // Brief summary
+  status      String   @default("pending") // pending, approved, applied, merged, rejected
+  confidence  Float?   // Confidence score
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}

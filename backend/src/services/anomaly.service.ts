@@ -5,7 +5,7 @@ import { EncryptionService } from './encryption.service';
 
 @Injectable()
 export class AnomalyService {
-    private fixes: Map<string, FixProposal> = new Map(); // Keep fixes in memory for now? Or Schema needs update. Plan didn't incl Fix.
+    // Fixes are now persisted to the Fix table via Prisma
 
     constructor(
         private prisma: PrismaService,
@@ -106,18 +106,22 @@ export class AnomalyService {
     async getAnomalies() {
         // Return structured anomalies with active fix details
         const records = await this.prisma.anomaly.findMany({ include: { repo: true } });
-        return records.map(r => {
-            const activeFix = this.getFixByAnomalyId(r.id);
-            return {
+        const results = [];
+
+        for (const r of records) {
+            const activeFix = await this.getFixByAnomalyId(r.id);
+            results.push({
                 ...JSON.parse(r.context),
-                id: r.id, // Explicitly ensure DB ID takes precedence over context ID
+                id: r.id,
                 repoUrl: r.repo.url,
                 status: r.status,
                 createdAt: r.createdAt,
-                branch: activeFix?.branch, // Expose branch name
-                fixExplanation: activeFix?.explanation // Expose reasoning
-            };
-        });
+                branch: activeFix?.branch,
+                fixExplanation: activeFix?.explanation
+            });
+        }
+
+        return results;
     }
 
     async getAnomaly(id: string) {
@@ -133,48 +137,85 @@ export class AnomalyService {
         };
     }
 
-    // Fixes are still transient for this iteration unless we add Fix model.
-    addFix(fix: FixProposal) {
-        this.fixes.set(fix.id, fix);
+    // === FIX MANAGEMENT (Database-backed) ===
+
+    async addFix(fix: FixProposal) {
+        // Upsert fix to database
+        await this.prisma.fix.upsert({
+            where: { anomalyId: fix.anomalyId },
+            update: {
+                diff: fix.diff,
+                explanation: fix.explanation,
+                summary: fix.summary,
+                status: fix.status || 'pending',
+                branch: fix.branch,
+                confidence: fix.confidence
+            },
+            create: {
+                id: fix.id,
+                anomalyId: fix.anomalyId,
+                diff: fix.diff,
+                explanation: fix.explanation,
+                summary: fix.summary,
+                status: fix.status || 'pending',
+                branch: fix.branch,
+                confidence: fix.confidence
+            }
+        });
+
         // Also update Anomaly status
         if (fix.anomalyId) {
-            this.prisma.anomaly.update({ where: { id: fix.anomalyId }, data: { status: 'PROPOSAL_READY' } }).catch(console.error);
+            await this.prisma.anomaly.update({
+                where: { id: fix.anomalyId },
+                data: { status: 'PROPOSAL_READY' }
+            }).catch(console.error);
         }
     }
 
     async receiveProposal(fix: FixProposal) {
-        this.fixes.set(fix.id, fix);
-        console.log(`[AnomalyService] Proposal stored for ${fix.anomalyId}`);
-        await this.prisma.anomaly.update({
-            where: { id: fix.anomalyId },
-            data: { status: 'PROPOSAL_READY' }
-        });
+        await this.addFix(fix);
+        console.log(`[AnomalyService] Proposal stored in DB for ${fix.anomalyId}`);
     }
 
-    getFix(id: string) {
-        // Try cache first, but if diff is empty, try to recover it
-        const cached = this.fixes.get(id);
-        if (cached && cached.diff) {
-            return cached;
+    async getFix(id: string): Promise<FixProposal | null> {
+        // Query database
+        const dbFix = await this.prisma.fix.findUnique({ where: { id } });
+        if (dbFix) {
+            return this.mapDbFixToProposal(dbFix);
         }
-        // Will be populated by ensureFix if needed
-        return cached;
+        // Try by anomalyId
+        const byAnomaly = await this.prisma.fix.findUnique({ where: { anomalyId: id } });
+        return byAnomaly ? this.mapDbFixToProposal(byAnomaly) : null;
     }
 
-    async getFixAsync(id: string) {
-        // Use ensureFix to recover fix with full data from DB if needed
-        return this.ensureFix(id);
+    async getFixAsync(id: string): Promise<FixProposal | null> {
+        return this.getFix(id);
     }
 
-    getFixByAnomalyId(anomalyId: string) {
-        return Array.from(this.fixes.values()).find(f => f.anomalyId === anomalyId);
+    async getFixByAnomalyId(anomalyId: string): Promise<FixProposal | null> {
+        const dbFix = await this.prisma.fix.findUnique({ where: { anomalyId } });
+        return dbFix ? this.mapDbFixToProposal(dbFix) : null;
+    }
+
+    private mapDbFixToProposal(dbFix: any): FixProposal {
+        return {
+            id: dbFix.id,
+            anomalyId: dbFix.anomalyId,
+            diff: dbFix.diff || '',
+            explanation: dbFix.explanation || '',
+            summary: dbFix.summary || '',
+            status: dbFix.status || 'pending',
+            branch: dbFix.branch || '',
+            confidence: dbFix.confidence || 0
+        };
     }
 
     async ensureFix(identifier: string): Promise<FixProposal | undefined> {
-        let fix = this.fixes.get(identifier) || this.getFixByAnomalyId(identifier);
+        // Try database first
+        let fix = await this.getFix(identifier);
         if (fix) return fix;
 
-        // Recovery Logic
+        // Recovery Logic - reconstruct from anomaly
         const anomaly = await this.prisma.anomaly.findUnique({
             where: { id: identifier },
             include: { repo: true }
@@ -188,7 +229,6 @@ export class AnomalyService {
             // Get the generated patch from the anomaly's context JSON
             let patchContent = '';
             try {
-                // Context is stored as JSON string in the database
                 const contextData = JSON.parse(anomaly.context || '{}');
                 patchContent = contextData?.generated_patch || contextData?.patch || '';
                 console.log(`[Recovery] Extracted patch from context, length: ${patchContent.length}`);
@@ -197,7 +237,7 @@ export class AnomalyService {
             }
 
             fix = {
-                id: identifier, // Assuming 1:1 for MVP
+                id: identifier,
                 anomalyId: identifier,
                 status: anomaly.status === 'SANDBOX_READY' ? 'applied_sandbox' :
                     anomaly.status === 'RESOLVED' ? 'merged' : 'pending',
@@ -207,7 +247,9 @@ export class AnomalyService {
                 branch: sandboxBranch,
                 confidence: 1.0
             };
-            this.fixes.set(identifier, fix as FixProposal);
+
+            // Persist recovered fix to database
+            await this.addFix(fix as FixProposal);
             console.log(`[Recovery] Fix reconstructed with patch length: ${patchContent.length}`);
             return fix as FixProposal;
         }
@@ -319,7 +361,7 @@ export class AnomalyService {
             }
 
             fix.status = 'applied_sandbox';
-            this.fixes.set(fixId, fix);
+            await this.addFix(fix);
 
             // Update anomaly status
             await this.prisma.anomaly.update({
@@ -395,7 +437,7 @@ export class AnomalyService {
 
             // Update fix status
             fix.status = 'merged';
-            this.fixes.set(fixId, fix);
+            await this.addFix(fix);
 
             // Update anomaly status
             await this.prisma.anomaly.update({
@@ -429,7 +471,7 @@ export class AnomalyService {
         fix.summary = `Updated Fix: ${instruction.substring(0, 20)}...`;
         fix.explanation = `Updated based on input: "${instruction}". Adjusted logic to be more robust.`;
         fix.status = 'pending';
-        this.fixes.set(fixId, fix);
+        await this.addFix(fix);
         return fix;
     }
 
@@ -445,10 +487,10 @@ export class AnomalyService {
         const fix = await this.ensureFix(id);
         if (fix) {
             fix.status = status;
-            this.fixes.set(id, fix);
+            await this.addFix(fix);
             // Legacy/Fallback status update
             if (status === 'applied') {
-                this.prisma.anomaly.update({ where: { id: fix.anomalyId }, data: { status: 'RESOLVED' } }).catch(console.error);
+                await this.prisma.anomaly.update({ where: { id: fix.anomalyId }, data: { status: 'RESOLVED' } }).catch(console.error);
             }
         }
     }
