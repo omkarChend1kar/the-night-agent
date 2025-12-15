@@ -3,8 +3,17 @@ import boto3
 import json
 import os
 import logging
+import requests
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 class BedrockAgent:
+    """
+    Base agent class that provides:
+    - AWS Bedrock LLM invocation with retry logic
+    - HTTP API calls with retry logic
+    - Credential management
+    """
+    
     MODEL_MAPPING = {
         "qwen_next_80b_instruct": "qwen.qwen3-next-80b-a3b",
         "qwen_vl_235b": "qwen.qwen3-vl-235b-a22b",
@@ -41,7 +50,7 @@ class BedrockAgent:
         self.logger.info(f"Initialized BedrockAgent with model: {self.model_id}")
 
     def _setup_creds(self):
-        # Load from file if env vars missing
+        """Load AWS credentials from file if env vars are missing."""
         if not os.environ.get('AWS_ACCESS_KEY_ID'):
             try:
                 # Find creds relative to this file (backend/agents/bedrock_agent.py -> backend/awsp_creds.txt)
@@ -54,10 +63,21 @@ class BedrockAgent:
                             k, v = line.strip().split('=', 1)
                             os.environ[k] = v
             except FileNotFoundError:
-                self.logger.warning(f"Creds file not found at {creds_path}")
-                pass
+                pass  # Will fail later when trying to use client
 
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=2, max=30),
+        retry=retry_if_exception_type(Exception),
+        before_sleep=lambda retry_state: logging.getLogger("BedrockAgent").warning(
+            f"Bedrock call failed, retrying in {retry_state.next_action.sleep}s... (attempt {retry_state.attempt_number})"
+        )
+    )
     def invoke(self, prompt, system_prompt="You are a helpful AI assistant."):
+        """
+        Invoke Bedrock LLM with retry logic.
+        Retries up to 3 times with exponential backoff.
+        """
         messages = [{
             "role": "user",
             "content": [{"text": prompt}]
@@ -65,22 +85,50 @@ class BedrockAgent:
         
         system = [{"text": system_prompt}]
 
-        try:
-            # Use the Converse API which abstracts model-specific payloads
-            response = self.client.converse(
-                modelId=self.model_id,
-                messages=messages,
-                system=system,
-                inferenceConfig={
-                    "maxTokens": 1000,
-                    "temperature": 0.7
-                }
-            )
-            return response['output']['message']['content'][0]['text']
-            
-        except Exception as e:
-            self.logger.error(f"Bedrock invocation failed: {e}")
-            self.logger.info("Falling back to raw invoke for older models or specific params...")
-            # Fallback for models not supported by Converse yet or specific errors
-            # For now, just return None or raise
-            return None
+        # Use the Converse API which abstracts model-specific payloads
+        response = self.client.converse(
+            modelId=self.model_id,
+            messages=messages,
+            system=system,
+            inferenceConfig={
+                "maxTokens": 2000,
+                "temperature": 0.7
+            }
+        )
+        return response['output']['message']['content'][0]['text']
+
+    @staticmethod
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, requests.exceptions.Timeout)),
+        before_sleep=lambda retry_state: logging.getLogger("BedrockAgent").warning(
+            f"HTTP request failed, retrying in {retry_state.next_action.sleep}s... (attempt {retry_state.attempt_number})"
+        )
+    )
+    def fetch_with_retry(url: str, timeout: int = 10) -> requests.Response:
+        """
+        Make an HTTP GET request with retry logic.
+        Retries up to 3 times with exponential backoff on network errors.
+        """
+        response = requests.get(url, timeout=timeout)
+        response.raise_for_status()
+        return response
+
+    @staticmethod
+    @retry(
+        stop=stop_after_attempt(3),
+        wait=wait_exponential(multiplier=1, min=1, max=10),
+        retry=retry_if_exception_type((requests.exceptions.RequestException, requests.exceptions.Timeout)),
+        before_sleep=lambda retry_state: logging.getLogger("BedrockAgent").warning(
+            f"HTTP POST failed, retrying in {retry_state.next_action.sleep}s... (attempt {retry_state.attempt_number})"
+        )
+    )
+    def post_with_retry(url: str, json_data: dict, timeout: int = 10) -> requests.Response:
+        """
+        Make an HTTP POST request with retry logic.
+        Retries up to 3 times with exponential backoff on network errors.
+        """
+        response = requests.post(url, json=json_data, timeout=timeout)
+        response.raise_for_status()
+        return response

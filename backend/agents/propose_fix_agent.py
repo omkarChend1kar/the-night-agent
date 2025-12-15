@@ -1,43 +1,43 @@
 
-import subprocess
 import os
 import json
 import logging
-import base64
+import sys
 import requests
+from bedrock_agent import BedrockAgent
 
-class ProposeFixAgent:
+class ProposeFixAgent(BedrockAgent):
+    """
+    Agent that proposes code fixes using Bedrock LLM.
+    Takes an anomaly with root cause analysis and generates a unified diff patch.
+    """
+    
     def __init__(self):
-        self.logger = logging.getLogger("ProposeFixAgent")
-        logging.basicConfig(level=logging.INFO)
-        # Assuming backend is running locally
+        super().__init__(model_name="mistral_large_3")
         self.api_url = os.getenv("API_URL", "http://localhost:3001/api/internal")
+        self.repo_path = os.getenv("REPO_PATH", "/Users/apple/Development/projects/the-night-agent")
 
     def run(self, anomaly_id):
         """
-        Input: Anomaly ID
-        Action: 
-          1. Fetch Anomaly from Backend.
-          2. Extract Root Cause Analysis from Context.
-          3. Run Cline.
-          4. Print output patch.
+        Main entry point.
+        1. Fetch anomaly with analysis from backend
+        2. Read relevant source files
+        3. Generate fix using LLM
+        4. Submit proposal to backend
         """
         self.logger.info(f"Fetching anomaly {anomaly_id}...")
+        
         try:
-            res = requests.get(f"{self.api_url}/anomalies/{anomaly_id}")
+            res = requests.get(f"{self.api_url}/anomalies/{anomaly_id}", timeout=10)
             if not res.ok:
                 self.logger.error(f"Failed to fetch anomaly: {res.status_code}")
                 return
             
             anomaly = res.json()
-            # The getAnomaly API spreads the context into the response object
-            # So root_cause_analysis is at the top level, not inside context
             analysis = anomaly.get('root_cause_analysis')
             
             if not analysis:
                 self.logger.error("No Root Cause Analysis found in anomaly context.")
-                # Fallback? Maybe try to use 'judge_reasoning' or just fail?
-                # User wants strict flow. Fail.
                 return
                 
         except Exception as e:
@@ -45,70 +45,120 @@ class ProposeFixAgent:
             return
 
         root_cause = analysis.get("root_cause", "Unknown issue")
+        suggested_fix = analysis.get("suggested_fix", "")
         files = analysis.get("relevant_files", [])
         
         self.logger.info(f"Proposing fix for: {root_cause[:50]}...")
         
-        # PROMPT CONSTRUCTION
-        prompt = f"""
-        You are a Senior Software Engineer.
-        The following issue has been analyzed:
-        "{root_cause}"
+        # Read source file contents for context
+        file_contents = self._read_source_files(files)
         
-        Your task is to fix this issue in the codebase.
-        Relevant files identified: {', '.join(files)}
+        # Generate fix using LLM
+        patch = self._generate_fix(root_cause, suggested_fix, files, file_contents, anomaly)
         
-        Please provide a UNIFIED DIFF patch to fix the issue.
-        """
-        
-        # We need to run this in the context of the REPO.
-        repo_path = os.getenv("REPO_PATH", "/Users/apple/Development/projects/the-night-agent")
-        
-        self.logger.info(f"Running cline in {repo_path}...")
-        
-        try:
-            # Run Cline non-interactively
-            cmd = ["npx", "cline", prompt, "--no-interactive"]
-            
-            # Since we can't easily capture the 'diff' from cline's interactive output unless it writes to a file,
-            # we instruct it to write to a file.
-            
-            patch_file = os.path.join(repo_path, f"fix_{anomaly_id}.patch")
-            
-            prompt_with_file = f"{prompt}\n\nIMPORTANT: Write the STANDARD UNIFIED DIFF (starting with 'diff --git') to a file named 'fix_{anomaly_id}.patch' in the current directory. Do not wrap in markdown blocks inside the file."
-            
-            cmd = ["npx", "cline", prompt_with_file, "--no-interactive"]
-            subprocess.run(cmd, cwd=repo_path, capture_output=True, text=True, timeout=300)
-            
-            if os.path.exists(patch_file):
-                with open(patch_file, "r") as f:
-                    patch_content = f.read()
-                
-                # Cleanup
-                os.remove(patch_file)
-                
-                encoded_patch = base64.b64encode(patch_content.encode('utf-8')).decode('utf-8')
-                print(f"PATCH_OUTPUT:{encoded_patch}")
-                
-                # Also save directly via API here to be robust?
-                # Kestra flow handles it via stdout parsing usually but moving logic here is safer.
-                self.submit_proposal(anomaly_id, analysis, patch_content)
-                
-            else:
-                self.logger.error("No patch file found.")
-                print("PATCH_OUTPUT:") # Empty
-                
-        except Exception as e:
-            self.logger.error(f"Cline execution failed: {e}")
+        if patch:
+            self.submit_proposal(anomaly_id, analysis, patch)
+        else:
+            self.logger.error("Failed to generate patch")
 
-    def submit_proposal(self, anomaly_id, analysis, patch):
+    def _read_source_files(self, files: list) -> dict:
+        """Read contents of relevant source files."""
+        contents = {}
+        for file_path in files[:5]:  # Limit to 5 files to avoid token limits
+            full_path = os.path.join(self.repo_path, file_path)
+            try:
+                if os.path.exists(full_path):
+                    with open(full_path, 'r') as f:
+                        contents[file_path] = f.read()
+                    self.logger.info(f"Read file: {file_path}")
+            except Exception as e:
+                self.logger.warning(f"Could not read {file_path}: {e}")
+        return contents
+
+    def _generate_fix(self, root_cause: str, suggested_fix: str, files: list, file_contents: dict, anomaly: dict) -> str:
+        """Generate a unified diff patch using Bedrock LLM."""
+        
+        # Build file context
+        file_context = ""
+        for path, content in file_contents.items():
+            # Truncate large files
+            truncated = content[:3000] + "\n... (truncated)" if len(content) > 3000 else content
+            file_context += f"\n--- {path} ---\n{truncated}\n"
+        
+        prompt = f"""You are a Senior Software Engineer fixing a production issue.
+
+ROOT CAUSE:
+{root_cause}
+
+SUGGESTED FIX:
+{suggested_fix}
+
+RELEVANT FILES: {', '.join(files)}
+
+SOURCE CODE:
+{file_context if file_context else "No source files available - infer from context"}
+
+ANOMALY CONTEXT:
+{json.dumps(anomaly.get('context', {}), indent=2)[:1000]}
+
+TASK:
+Generate a UNIFIED DIFF PATCH that fixes this issue.
+
+RULES:
+1. Output ONLY the patch content, starting with "diff --git"
+2. Use standard unified diff format
+3. Include proper file paths (a/path and b/path)
+4. Be minimal - only change what's necessary
+5. Do NOT wrap in markdown code blocks
+
+EXAMPLE FORMAT:
+diff --git a/src/service.ts b/src/service.ts
+--- a/src/service.ts
++++ b/src/service.ts
+@@ -10,6 +10,7 @@ function processRequest(req) {{
+   const data = req.body;
++  if (!data) throw new Error('Invalid request body');
+   return handler(data);
+ }}
+"""
+        
+        response = self.invoke(prompt, system_prompt="You are an expert software engineer. Output only valid unified diff patches.")
+        
+        if not response:
+            return None
+        
+        # Clean up response
+        patch = response.strip()
+        
+        # Remove markdown code blocks if present
+        if "```diff" in patch:
+            patch = patch.split("```diff")[1].split("```")[0].strip()
+        elif "```" in patch:
+            patch = patch.split("```")[1].split("```")[0].strip()
+        
+        # Validate it looks like a diff
+        if not patch.startswith("diff --git") and not patch.startswith("---"):
+            self.logger.warning("Generated patch doesn't look like a valid diff")
+            # Try to extract diff portion anyway
+            if "diff --git" in patch:
+                patch = patch[patch.find("diff --git"):]
+        
+        print(f"PATCH_OUTPUT:{patch[:200]}...")  # Log first 200 chars for debugging
+        return patch
+
+    def submit_proposal(self, anomaly_id: str, analysis: dict, patch: str):
+        """Submit the fix proposal to the backend."""
         try:
-            res = requests.post(f"{self.api_url}/anomalies/proposal", json={
-                'id': anomaly_id,
-                'analysis': json.dumps(analysis),
-                'patch': patch,
-                'status': 'PROPOSAL_READY'
-            })
+            res = requests.post(
+                f"{self.api_url}/anomalies/proposal",
+                json={
+                    'id': anomaly_id,
+                    'analysis': json.dumps(analysis),
+                    'patch': patch,
+                    'status': 'PROPOSAL_READY'
+                },
+                timeout=10
+            )
             if res.ok:
                 self.logger.info("Proposal submitted successfully.")
             else:
@@ -116,11 +166,10 @@ class ProposeFixAgent:
         except Exception as e:
             self.logger.error(f"Failed to submit proposal: {e}")
 
+
 if __name__ == "__main__":
-    import sys
-    # Expect Anomaly ID as arg
     if len(sys.argv) > 1:
         anomaly_id = sys.argv[1]
         ProposeFixAgent().run(anomaly_id)
     else:
-        print("Error: Anomaly ID required")
+        print("Usage: python propose_fix_agent.py <anomaly_id>")

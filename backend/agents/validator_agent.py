@@ -58,7 +58,6 @@ class ValidatorAgent(BedrockAgent):
             "reasoning": "Brief explanation of why it fits the criteria or why it is noise"
         }}
         """
-        """
         
         response_text = self.invoke(prompt)
         if not response_text: return
